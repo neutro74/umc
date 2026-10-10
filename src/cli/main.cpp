@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <filesystem>
 #include <cstdlib>
 #include <iostream>
 
@@ -148,6 +149,16 @@ int main(int argc, char** argv) {
     GameProcess p;
     if (!pick(pid, true, p)) return 1;
     if (cmd == "log" && args.size() > 1 && args[1] == "-f") return cmd_follow(p);
+
+    // Files named on the command line must be readable by the game, which may be sandboxed.
+    auto stage_arg = [&](size_t index) {
+        if (index >= args.size() || !plat::file_exists(args[index])) return;
+        std::string error, staged = stage_file(p, std::filesystem::absolute(args[index]).string(), error);
+        if (staged.empty()) std::cerr << "warning: " << error << "\n";
+        else args[index] = staged;
+    };
+    if (cmd == "load") stage_arg(1);
+    if (cmd == "script" && args.size() > 2 && args[1] == "load") stage_arg(2);
 
     std::string reply;
     if (!agent_request(p, args, reply)) {

@@ -84,12 +84,12 @@ std::string stage_file(const GameProcess& p, const std::string& host_path, std::
         error = "missing " + host_path;
         return "";
     }
-    // A unique name per build, since overwriting a library the game has mapped would crash it.
+    // One directory per file version, so overwriting a library the game has mapped can't happen
+    // and the file keeps its real name.
     std::string base = host_path.substr(host_path.rfind('/') + 1);
-    size_t dot = base.rfind('.');
-    std::string name = base.substr(0, dot) + "-" + std::to_string(st.st_size) + "-" +
-                       std::to_string(st.st_mtime) + (dot == std::string::npos ? "" : base.substr(dot));
-    std::string inside = plat::join(plat::runtime_dir(), "staged");
+    std::string name = base;
+    std::string version = std::to_string(st.st_size) + "-" + std::to_string(st.st_mtime);
+    std::string inside = plat::join(plat::join(plat::runtime_dir(), "staged"), version);
     std::string outside = root_of(p.pid) + inside;
     if (!plat::make_dirs(outside)) {
         error = "cannot create " + outside;

@@ -205,6 +205,11 @@ bool GameApi::local_player(JNIEnv* env, EntityInfo& out) {
 std::vector<EntityInfo> GameApi::players(JNIEnv* env) {
     std::vector<EntityInfo> out;
     jobject level = current_level(env);
+    if (level && !players_) {  // ClientLevel only loads once a world is joined
+        players_ = Core::get().find_method(env, kLevel, "players", "()Ljava/util/List;");
+        for (auto& entry : report_)
+            if (entry.first == "ClientLevel.players") entry.second = players_ != nullptr;
+    }
     if (!level || !players_) return out;
     jobject list = env->CallObjectMethod(level, players_);
     env->DeleteLocalRef(level);
