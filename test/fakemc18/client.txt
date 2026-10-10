@@ -20,7 +20,13 @@ net.minecraft.util.IChatComponent -> eu:
     !m ()Ljava/lang/String; getUnformattedText -> c
 net.minecraft.util.ChatComponentText -> fa:
 net.minecraft.client.entity.EntityPlayerSP -> bln:
+    !m (Ljava/lang/String;)V sendChatMessage -> e
     !m (Lnet/minecraft/util/IChatComponent;)V addChatMessage -> b
+net.minecraft.client.gui.GuiNewChat -> bao:
+    !m (Lnet/minecraft/util/IChatComponent;I)V printChatMessageWithOptionalDeletion -> a
+net.minecraft.entity.player.EntityPlayer -> wn:
+net.minecraft.client.multiplayer.PlayerControllerMP -> bda:
+    !m (Lnet/minecraft/entity/player/EntityPlayer;Lnet/minecraft/entity/Entity;)V attackEntity -> a
 net.minecraft.client.multiplayer.WorldClient -> bdb:
 net.minecraft.world.World -> adm:
     !f playerEntities -> k

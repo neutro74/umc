@@ -74,6 +74,11 @@ public:
     jobject arg(int i) override {
         return i >= 0 && i < arg_count() ? env_->GetObjectArrayElement(args_, i) : nullptr;
     }
+    bool set_argument(int i, jobject value) {
+        if (i < 0 || i >= arg_count()) return false;
+        env_->SetObjectArrayElement(args_, i, value);
+        return !env_->ExceptionCheck();
+    }
     jint arg_int(int i) override { return core_.unbox(env_, arg(i), 'I').i; }
     jlong arg_long(int i) override { return core_.unbox(env_, arg(i), 'J').j; }
     jfloat arg_float(int i) override { return core_.unbox(env_, arg(i), 'F').f; }
@@ -387,6 +392,7 @@ bool Core::set_enabled(JNIEnv* env, ModuleSlot& slot, bool enabled, std::string&
 }
 
 std::string Core::runtime_class_name(const std::string& named) {
+    if (!named.empty() && named[0] == '[') return mappings_.remap_desc(named);
     return mappings_.to_obf(internal(named));
 }
 
@@ -400,7 +406,7 @@ std::string Core::signature_name(jclass cls) {
 }
 
 jclass Core::scan_loaded(JNIEnv* env, const std::string& runtime_class) {
-    const std::string want = "L" + runtime_class + ";";
+    const std::string want = !runtime_class.empty() && runtime_class[0] == '[' ? runtime_class : "L" + runtime_class + ";";
     jint count = 0;
     jclass* classes = nullptr;
     if (jvmti_->GetLoadedClasses(&count, &classes) != JVMTI_ERROR_NONE) return nullptr;
@@ -661,6 +667,11 @@ void Core::on_class_prepare(JNIEnv* env, jclass cls) {
     add_bridge_read(env, cls);
 }
 
+bool Core::set_argument(Call& call, int index, jobject value) {
+    auto* own = dynamic_cast<CallImpl*>(&call);
+    return own && own->set_argument(index, value);
+}
+
 jobject Core::on_enter(JNIEnv* env, jint site, jobject self, jobjectArray args) {
     if (g_bypass_site == site) {
         g_bypass_site = -1;
@@ -682,7 +693,7 @@ jobject Core::on_enter(JNIEnv* env, jint site, jobject self, jobjectArray args) 
         } catch (const std::exception& e) {
             log(std::string("hook threw: ") + e.what());
         }
-        if (call.threw) return nullptr;  // the original's exception propagates out of the method
+        if (call.threw && env->ExceptionCheck()) return nullptr;  // scripts may catch the original's exception
         if (env->ExceptionCheck()) log("hook left a java exception: " + java_exception(env));
         if (call.done) break;
     }
@@ -801,6 +812,7 @@ jvalue Core::unbox(JNIEnv* env, jobject o, char type) {
     case 'D': v.d = env->CallStaticDoubleMethod(bridge_, env->GetStaticMethodID(bridge_, "asDouble", "(Ljava/lang/Object;)D"), o); break;
     default: v.i = env->CallStaticIntMethod(bridge_, env->GetStaticMethodID(bridge_, "asInt", "(Ljava/lang/Object;)I"), o);
     }
+    env->ExceptionCheck();
     return v;
 }
 

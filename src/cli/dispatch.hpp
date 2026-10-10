@@ -10,7 +10,7 @@ namespace umc::cli {
 extern const char* kVersion;
 extern const char* kBanner;
 
-void usage();
+void usage(bool banner = false);
 // Picks the target game: an explicit pid, or the only candidate. Prints why when it can't.
 bool pick(int pid, bool need_agent, GameProcess& out);
 // Runs one command line as the CLI would (the shell reuses this for everything it types).

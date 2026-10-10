@@ -28,7 +28,7 @@ trace net.minecraft.world.entity.player.Player.jumpFromGround()
 ## Features
 
 - **Injection only.** Attach to a game that's already running, from any launcher. Files the game needs are staged where sandboxed launchers (like the Prism Flatpak) can read them.
-- **Script plugins.** Write a plugin in plain JavaScript, no compiler needed. It runs in a sandbox with no file, network or system access, can only use the parts of the game you approve, and can draw on your HUD. Share it as a single `.js` file.
+- **Script plugins.** Write a plugin in plain JavaScript, no compiler needed. It uses approved game APIs, private storage and HUD drawing. An explicit trusted permission also exposes Java APIs and arbitrary method hooks. Share it as a single `.js` file.
 - **Method hooks from C++.** Run code at the start of any method, read its arguments, cancel it, replace its return value, or run the original and change what it returns.
 - **Any version, 1.7 to 26.x.** Mojang's mappings (1.14.4 and later) and MCP's (1.7 to 1.12) are fetched and applied automatically, so you always write the same readable names. 26.1 and later ship unobfuscated and need nothing.
 - **Inspection from the terminal.** List classes, fields and methods with readable names, call static methods, read and write static fields, trace calls with their arguments, dump class bytecode.
@@ -46,7 +46,7 @@ Hooks rewrite bytecode through JVMTI class retransformation. The hooked method g
 
 ## Getting started
 
-You need CMake 3.16+, a C++17 compiler and a JDK (for the JNI headers and to compile the bridge class).
+You need CMake 3.16+, a C++17 compiler and a JDK (for the JNI/JVMTI headers). The injected bridge bytecode is embedded; the production build does not compile Java source.
 
 ```sh
 git clone https://github.com/neutro74/umc
@@ -71,6 +71,9 @@ When several games are running, pick one with `-p <pid>` in front of any command
 
 | | |
 | --- | --- |
+| `shell` | interactive commands, history, completion and live game logs |
+| `daemon start`, `daemon stop`, `daemon status`, `daemon events` | watch Minecraft launches, attach automatically and report activity |
+| `daemon install`, `daemon uninstall` | enable or remove startup integration |
 | `ps [-a]` | list running Minecraft JVMs (`-a` shows every JVM) |
 | `attach [pid] [-l plugin]... [-o opts]` | inject into a game, optionally loading plugins |
 | `mappings fetch\|import\|list` | manage the mappings cache |
@@ -131,18 +134,49 @@ Install Coords HUD? [y/N]
 
 Installed scripts load every time you attach. `umc scripts` lists them and `umc uninstall <id>` removes one.
 
-**What a script can do.** Each script runs in its own QuickJS sandbox. It has no file, network, process or Java access, a memory cap, and a time limit on every call, so an infinite loop can't freeze the game. The only things it can reach are the objects below, and only the ones its approved permissions unlock. A script that asks for something it wasn't given just gets `undefined`.
+**What a script can do.** Each script runs in its own QuickJS context. Ordinary permissions expose the curated APIs below, with a memory cap and a time limit on JavaScript execution. The optional `java` permission is for trusted code and grants JVM access beyond the sandbox. APIs for permissions a script was not granted are absent.
 
 | Permission | Unlocks |
 | --- | --- |
 | *(always)* | `umc.log(...)`, `umc.on("tick", fn)`, `game.version` |
 | `player` | `game.player()`: name, uuid, id, x, y, z, yaw, pitch, health, onGround |
 | `players` | `game.players()`: the same for every player around you |
-| `chat` | `game.chat(text)`: a message in your own chat window |
+| `chat` | `game.chat(text)`, incoming `chat` events and outgoing `send` events |
+| `combat` | `attack` events, including the target and cancellation |
 | `render` | `umc.on("render", fn)`, `ui.rect(x, y, w, h, argb)`, `ui.text(text, x, y, argb)`, `ui.width(text)`, `ui.screen()` |
 | `storage` | `fs.read(name)`, `fs.write(name, text)`, `fs.append(name, text)`, `fs.exists(name)`, `fs.remove(name)`, `fs.list()` |
+| `java` | trusted Java calls, constructors, fields, arrays and arbitrary method hooks |
+
+**Cancellable events.** `umc.on("chat", e => ...)` receives `e.text`; `send` receives `e.text` and `e.command`; `attack` receives `e.target` (or `null` when there is no target). Call `e.cancel()` to suppress the game method. Chat and send require `chat`; attack requires `combat`. Nested data events are suppressed during a handler to prevent recursion.
 
 **Storage is a private folder, not your disk.** A script with `storage` gets one folder of its own (`umc/data/<script id>/` in UMC's config directory) and nothing else on the computer is reachable. File names are plain (`settings.json`: letters, digits, `.`, `_`, `-`), so there are no paths, no `..` and no hidden files. A script can keep at most 100 files, 1 MB each and 10 MB in total, and writes are atomic, so a crash can't leave half a file behind.
+
+**Trusted Java access.** A script declaring `@permissions java` can use:
+
+```js
+const Minecraft = java.type("net.minecraft.client.Minecraft");
+// Class/member names and descriptors use the mappings for the running version.
+// Choose the method name present in that version; the curated game API handles historical alternatives.
+const mc = Minecraft.call("getInstance", "()Lnet/minecraft/client/Minecraft;");
+const player = mc.get("player", "Lnet/minecraft/client/player/LocalPlayer;");
+if (player) umc.log(player.call("getX", "()D"));
+```
+
+`Type.call(name, descriptor, ...args)` calls a static method; `object.call(...)` calls an instance method. `Type.new(constructorDescriptor, ...args)` constructs an object. Both types and objects have `get(name, descriptor)` and `set(name, descriptor, value)`. Final fields cannot be written. Java strings and primitive results become JavaScript values; Java `long` values use `BigInt`. Other results are Java object handles that remain valid across callbacks and release their JNI references when collected.
+
+`java.array(componentDescriptor, values)` creates an array, including nested arrays. Array handles expose `length()`, `at(index)` and `put(index, value)`.
+
+```js
+const hook = java.hook("net.minecraft.client.Minecraft", "tick", "()V", e => {
+    // e.self is the receiver (null for static methods); e.args holds boxed arguments as JS values.
+    e.proceed(); // execute the original now; code below runs afterwards
+});
+// java.unhook(hook) removes one of this script's hooks; unloading removes all of them.
+```
+
+Hooks can call `e.cancel()` to skip the original, or `e.return(value)` to replace its return. Use `e.setArg(index, value)` followed by `e.proceed()` to run with changed arguments. The call object expires when the callback returns. Hooks become active after the script finishes loading; errors disable the failing hook. Constructors and class initializers cannot be hooked.
+
+The `java` permission grants access to Java file, network and process APIs. Java execution and JVM allocations are outside the QuickJS time and memory caps; a blocking Java call can block the game. Keep game mutations on the appropriate game thread, usually a tick or method hook, rather than performing them during script initialization. This bridge does not yet provide Java class generation or JavaScript implementations of Java interfaces, so it is not full parity with every Java mod.
 
 Scripts you load yourself with `umc script load <file>` are treated as local development code: they get what their header declares, or everything if they have no header. Examples are in [`examples/scripts`](examples/scripts).
 
@@ -221,7 +255,9 @@ Mod loaders that remap the game at runtime need their own naming scheme. NeoForg
 
 UMC is early. Every push downloads real Minecraft servers (1.21.4 with mappings, 26.3 without) on all three systems, injects, and checks version and side detection, mappings, hooks, traces and scripts. A larger suite (`test/run.sh`) runs against a small fake game on Linux, including a fake 1.8-style game that uses MCP names. The client HUD, position reading and chat have been checked on a live 26.3 client on Linux; the client on Windows and macOS, and any real pre-1.14 game, have not been tried yet.
 
-Planned next: a background daemon that watches for game launches and injects automatically, an interactive shell with history, completion and live events, and a proper catalog for sharing script plugins.
+The daemon and interactive shell are implemented. The shell streams game logs above the prompt and completes commands, modules and script IDs; class and method name completion is not yet implemented. `log -f` also follows output from the one-shot CLI. Planned next: interface callbacks/class generation for advanced scripting, broader real-client tests, and a catalog for sharing script plugins.
+
+`bash test/script_api.sh` tests the scripting bridge and cancellable events inside a real JVM without attach/control sockets, including mapped legacy names, Unicode, primitive/object arrays, permission denial, return replacement, argument editing, original-method wrapping, expired call objects and hook cleanup.
 
 ## Layout
 
@@ -230,10 +266,9 @@ include/umc/      public API for modules
 src/agent/        the injected library: bytecode rewriter, hooks, mappings, commands
 src/cli/          the umc CLI: process discovery, injection per OS, mappings download
 src/common/       platform layer shared by both
-src/java/         the bridge class defined into the game
 examples/         example plugin
 test/             end-to-end tests and the bytecode stress test
-assets/           logo and banner, with the Blender scripts that render them
+assets/           finished logo and banner assets
 ```
 
 ## A note on servers

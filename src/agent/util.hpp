@@ -30,12 +30,16 @@ inline std::string java_exception(JNIEnv* env) {
     std::string text = "java exception";
     jclass obj = env->FindClass("java/lang/Object");
     jmethodID to_string = env->GetMethodID(obj, "toString", "()Ljava/lang/String;");
-    if (auto s = static_cast<jstring>(env->CallObjectMethod(t, to_string))) {
+    auto s = static_cast<jstring>(env->CallObjectMethod(t, to_string));
+    if (!env->ExceptionCheck() && s) {
         const char* c = env->GetStringUTFChars(s, nullptr);
         text = c;
         env->ReleaseStringUTFChars(s, c);
     }
     env->ExceptionClear();
+    if (s) env->DeleteLocalRef(s);
+    env->DeleteLocalRef(obj);
+    env->DeleteLocalRef(t);
     return text;
 }
 

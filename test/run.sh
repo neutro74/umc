@@ -143,6 +143,24 @@ check "player read through MCP names" "legacy player: OldCombatter 12.5 70 -4.25
 check "other players resolve" "legacy players: 1" u log 20
 check "chat reaches the game" "chat: hello from umc" cat "$work/game18.out"
 check "game accessors all resolve" "ok       minecraft.player" u game
+
+echo "events (1.8 style)"
+check "events script loads" "loaded" u script load "$root/test/scripts/events.js"
+u call net.minecraft.client.main.Main startEvents >/dev/null
+sleep 7
+out=$(cat "$work/game18.out"); log=$(u log 60)
+check "chat event sees messages" "saw chat: hello world" echo "$log"
+check "chat can be cancelled" "none" bash -c "grep -q 'chat-shown: secret stuff' '$work/game18.out' && echo shown || echo none"
+check "uncancelled chat is shown" "chat-shown: hello world" echo "$out"
+check "send event sees messages and commands" "saw send: /home true" echo "$log"
+check "outgoing chat can be cancelled" "none" bash -c "grep -q 'sent: .help' '$work/game18.out' && echo sent || echo none"
+check "uncancelled outgoing chat goes out" "sent: normal message" echo "$out"
+check "attack event names the target" "saw attack on OldCombatter" echo "$log"
+total=$(grep -c "saw attack" <<<"$log"); done_=$(grep -c "^attacked:" "$work/game18.out")
+check "attacks can be cancelled" "fewer" bash -c "[ $done_ -lt $total ] && echo fewer || echo same-$done_-$total"
+u script unload events-check >/dev/null
+check "events need permissions" "chat blocked: the 'chat' event needs the 'chat' permission" bash -c "'$umc' -p $pid script load '$root/test/scripts/events_denied.js' >/dev/null; '$umc' -p $pid log 10"
+check "attack needs its own permission" "attack blocked: the 'attack' event needs the 'combat' permission" u log 10
 kill $pid
 echo "shell"
 java -cp "$work/game" net.minecraft.client.main.Main --accessToken test >"$work/shell.out" 2>&1 &

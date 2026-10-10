@@ -8,7 +8,6 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-find_package(Java 1.8 REQUIRED COMPONENTS Development)
 find_package(JNI REQUIRED COMPONENTS JVM)
 find_package(Threads REQUIRED)
 
@@ -42,18 +41,7 @@ if(NOT WIN32)
   target_include_directories(linenoise PUBLIC ${linenoise_SOURCE_DIR})
 endif()
 
-# The bridge class is defined into the target JVM at runtime, so it is compiled
-# for Java 8 to stay loadable by old Minecraft versions.
-set(BRIDGE_SRC ${CMAKE_SOURCE_DIR}/src/java/umc/Bridge.java)
-set(BRIDGE_CLASS ${CMAKE_BINARY_DIR}/java/umc/Bridge.class)
-set(BRIDGE_HEADER ${CMAKE_BINARY_DIR}/generated/bridge_class.h)
-add_custom_command(
-  OUTPUT ${BRIDGE_HEADER}
-  COMMAND ${Java_JAVAC_EXECUTABLE} --release 8 -nowarn -d ${CMAKE_BINARY_DIR}/java ${BRIDGE_SRC}
-  COMMAND ${CMAKE_COMMAND} -DIN=${BRIDGE_CLASS} -DOUT=${BRIDGE_HEADER} -DNAME=kBridgeClass -P ${CMAKE_SOURCE_DIR}/cmake/embed.cmake
-  DEPENDS ${BRIDGE_SRC} ${CMAKE_SOURCE_DIR}/cmake/embed.cmake
-  COMMENT "Compiling umc.Bridge")
-
+# The injected bootstrap bridge is embedded in src/agent/bridge_class.h.
 set(ACCESSORS_SRC ${CMAKE_SOURCE_DIR}/src/agent/accessors.txt)
 set(ACCESSORS_HEADER ${CMAKE_BINARY_DIR}/generated/accessors_table.h)
 add_custom_command(
@@ -62,18 +50,17 @@ add_custom_command(
   DEPENDS ${ACCESSORS_SRC} ${CMAKE_SOURCE_DIR}/cmake/embed.cmake
   COMMENT "Embedding accessors.txt")
 
-add_library(umc_agent SHARED
-  src/agent/agent.cpp
+set(UMC_CORE_SOURCES
   src/agent/core.cpp
   src/agent/commands.cpp
   src/agent/scripts.cpp
   src/agent/game.cpp
+  src/agent/java.cpp
   src/agent/classfile.cpp
   src/agent/mappings.cpp
-  src/agent/server.cpp
   src/common/platform.cpp
-  ${BRIDGE_HEADER}
   ${ACCESSORS_HEADER})
+add_library(umc_agent SHARED src/agent/agent.cpp src/agent/server.cpp ${UMC_CORE_SOURCES})
 set_target_properties(umc_agent PROPERTIES OUTPUT_NAME umc)
 target_include_directories(umc_agent PRIVATE include src ${CMAKE_BINARY_DIR}/generated ${JNI_INCLUDE_DIRS})
 target_link_libraries(umc_agent PRIVATE qjs Threads::Threads ${CMAKE_DL_LIBS})
@@ -122,3 +109,8 @@ include(GNUInstallDirs)
 install(TARGETS umc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS umc_agent LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/umc)
 install(DIRECTORY include/umc DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# In-process JVM tests also run where the sandbox prohibits attach/control sockets.
+add_executable(umc_script_test EXCLUDE_FROM_ALL test/script_api.cpp ${UMC_CORE_SOURCES})
+target_include_directories(umc_script_test PRIVATE include src ${CMAKE_BINARY_DIR}/generated ${JNI_INCLUDE_DIRS})
+target_link_libraries(umc_script_test PRIVATE qjs ${JNI_LIBRARIES} Threads::Threads ${CMAKE_DL_LIBS})

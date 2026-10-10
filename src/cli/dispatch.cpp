@@ -25,8 +25,9 @@ const char* kBanner = R"(
   Universal Minecraft Connector
 )";
 
-void usage() {
-    std::cout << kBanner << "  v" << kVersion << R"(
+void usage(bool banner) {
+    if (banner) std::cout << kBanner << "  v" << kVersion << "\n";
+    std::cout << R"(
 
 usage: umc [-p PID] <command> [args...]
 
@@ -36,15 +37,22 @@ local
   mappings fetch|import|list       manage obfuscation mappings
   install <file|url> [--yes]       install a script plugin (shows what it asks for first)
   uninstall <id> | scripts         remove a plugin, or list installed plugins
+  shell | repl                    interactive commands, history and live events
+  daemon start|stop|status|events  watch game launches and attach automatically
+  daemon install|uninstall        manage startup integration
 
 in the game (-p picks the process when several have UMC)
   status | threads | mem | gc
-  modules | enable <m> | disable <m> | mod <m> [args...]
-  load <plugin.so|script.js> | unload <plugin> | reload <plugin>
+  game                            report resolved game accessors
+  script load <file.js> | script unload <id> | script list
   classes <filter> | fields <class> | methods <class> | map <class> [member]
   get <class> <field> | set <class> <field> <value> | call <class> <method> [args...]
   dump <class> <file> | hooks | trace <class> <method> [desc] | untrace <id|all>
   log [n] | log -f
+
+trusted native developer plugins
+  modules | enable <m> | disable <m> | mod <m> [args...]
+  load <library|script.js> | unload <plugin> | reload <plugin>
 
 agent options (-o), comma separated
   version=26.3  side=client|server  mappings=FILE  enable=mod1+mod2
@@ -133,7 +141,7 @@ int cmd_follow(const GameProcess& p) {
 
 int dispatch(std::vector<std::string> args, int pid) {
     if (args.empty() || args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
-        usage();
+        usage(args.empty());
         return args.empty() ? 1 : 0;
     }
     if (args[0] == "--version" || args[0] == "version") {

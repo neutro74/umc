@@ -352,6 +352,39 @@ bool GameApi::screen_size(JNIEnv* env, jobject, int& w, int& h) {
     return ok;
 }
 
+std::vector<GameApi::HookTarget> GameApi::hook_targets(JNIEnv* env, const std::string& label) {
+    std::vector<HookTarget> out;
+    Core& core = Core::get();
+    auto it = table_.find(label);
+    if (it == table_.end()) return out;
+    for (const Candidate& c : it->second) {
+        bool exists = core.remapped() ? core.mapped_method(c.owner, c.name, c.desc)
+                                      : core.find_method(env, c.owner, c.name, c.desc) != nullptr;
+        if (exists) out.push_back({c.owner, c.name, c.desc});
+    }
+    return out;
+}
+
+std::string GameApi::text_of(JNIEnv* env, jobject message) {
+    if (!message) return "";
+    jclass string_class = env->FindClass("java/lang/String");
+    bool is_string = env->IsInstanceOf(message, string_class);
+    env->DeleteLocalRef(string_class);
+    if (is_string) {
+        const char* chars = env->GetStringUTFChars(static_cast<jstring>(message), nullptr);
+        std::string out = chars;
+        env->ReleaseStringUTFChars(static_cast<jstring>(message), chars);
+        return out;
+    }
+    return component_text(env, message);
+}
+
+bool GameApi::entity_info(JNIEnv* env, jobject entity, EntityInfo& out) {
+    if (!entity) return false;
+    out = read(env, entity);
+    return true;
+}
+
 bool GameApi::hook_target(JNIEnv* env, const std::string& label, std::string& owner, std::string& name, std::string& desc) {
     Core& core = Core::get();
     const auto it = table_.find(label);

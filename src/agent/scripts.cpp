@@ -1,12 +1,14 @@
 #include "agent/scripts.hpp"
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 
 #include "agent/core.hpp"
 #include "agent/game.hpp"
+#include "agent/java.hpp"
 #include "common/platform.hpp"
 #include "common/script_meta.hpp"
 #include "agent/util.hpp"
@@ -19,6 +21,7 @@ struct ScriptEngine::Script {
     std::set<std::string> permissions;
     JSContext* ctx = nullptr;
     std::map<std::string, std::vector<JSValue>> handlers;
+    std::map<int, JSValue> hooks;
 };
 
 namespace {
@@ -35,11 +38,16 @@ bool g_timed = false;
 int interrupt(JSRuntime*, void*) { return g_timed && std::chrono::steady_clock::now() > g_deadline; }
 
 struct Budget {
+    std::chrono::steady_clock::time_point previous_deadline;
+    bool previous_timed;
     explicit Budget(int ms) {
-        g_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+        previous_deadline = g_deadline;
+        previous_timed = g_timed;
+        auto next = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+        g_deadline = g_timed ? std::min(g_deadline, next) : next;
         g_timed = true;
     }
-    ~Budget() { g_timed = false; }
+    ~Budget() { g_deadline = previous_deadline; g_timed = previous_timed; }
 };
 
 std::string describe_exception(JSContext* ctx) {
@@ -83,8 +91,9 @@ JSValue js_on(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (!name) return JS_EXCEPTION;
     std::string event = name;
     JS_FreeCString(ctx, name);
-    if (event == "render" && !script_of(ctx)->permissions.count("render"))
-        return JS_ThrowRangeError(ctx, "the 'render' event needs the 'render' permission");
+    static const std::map<std::string, std::string> needs = {{"render", "render"}, {"chat", "chat"}, {"send", "chat"}, {"attack", "combat"}};
+    if (auto need = needs.find(event); need != needs.end() && !script_of(ctx)->permissions.count(need->second))
+        return JS_ThrowRangeError(ctx, "the '%s' event needs the '%s' permission", event.c_str(), need->second.c_str());
     if (!ScriptEngine::get().ensure_event_hook(event)) return JS_ThrowRangeError(ctx, "unknown event '%s'", event.c_str());
     script_of(ctx)->handlers[event].push_back(JS_DupValue(ctx, argv[1]));
     return JS_UNDEFINED;
@@ -346,37 +355,83 @@ bool ScriptEngine::ensure_event_hook(const std::string& event) {
     std::lock_guard<std::recursive_mutex> lock(mu_);
     if (event_hooks_.count(event)) return true;
     Core& core = Core::get();
-    int id = -1;
+    GameApi& game = GameApi::get();
     JNIEnv* env = current_env();
+    std::vector<int> ids;
     std::string owner, method, desc;
+
+    // Hooks every method the table lists under `label` that exists on this version.
+    auto hook_all = [&](const std::string& label, const std::string& name_only_filter, HookFn fn) {
+        if (!env) return;
+        for (auto& t : game.hook_targets(env, label)) {
+            int id = core.hook(t.owner, t.name, name_only_filter.empty() ? t.desc : "", fn);
+            if (id >= 0) ids.push_back(id);
+        }
+    };
+
     if (event == "tick") {
         auto fire = [](Call&) { ScriptEngine::get().emit("tick"); };
         if (core.side() == Side::Server) {
-            id = core.hook("net.minecraft.server.MinecraftServer", "tickServer", "", fire);
-        } else if (env && GameApi::get().hook_target(env, "hook.tick", owner, method, desc)) {
-            id = core.hook(owner, method, desc, fire);
+            int id = core.hook("net.minecraft.server.MinecraftServer", "tickServer", "", fire);
+            if (id >= 0) ids.push_back(id);
+        } else {
+            hook_all("hook.tick", "", fire);
         }
-        if (id < 0) core.log("script event 'tick' could not be hooked");
     } else if (event == "render") {
-        // The HUD draw method: Hud.extractRenderState on 26.x, Gui.render before that.
         auto draw = [](Call& call) {
-            JNIEnv* env = call.env();
+            JNIEnv* e = call.env();
             jobject first = call.arg(0);
-            if (!GameApi::get().frame_token(env, first, g_graphics)) return;
+            if (!GameApi::get().frame_token(e, first, g_graphics)) return;
             g_in_frame = true;
             ScriptEngine::get().emit("render");
             g_in_frame = false;
             g_graphics = nullptr;
         };
-        // Name only: the HUD method's parameters differ between versions, and the name is unique in its class.
-        if (env && GameApi::get().hook_target(env, "hook.render", owner, method, desc))
-            id = core.hook(owner, method, "", draw);
-        if (id < 0) core.log("script event 'render' could not be hooked");
+        // Name only: the HUD method's parameters differ between versions and the name is unique in its class.
+        hook_all("hook.render", "name", draw);
+    } else if (event == "chat") {
+        hook_all("hook.chat", "", [](Call& call) {
+            JNIEnv* e = call.env();
+            jobject message = call.arg(0);
+            std::string text = GameApi::get().text_of(e, message);
+            if (ScriptEngine::get().emit("chat", [&](JSContext* ctx, JSValue o) {
+                    JS_SetPropertyStr(ctx, o, "text", JS_NewString(ctx, text.c_str()));
+                }))
+                call.cancel();
+        });
+    } else if (event == "send") {
+        auto on_send = [](bool is_command) {
+            return [is_command](Call& call) {
+                JNIEnv* e = call.env();
+                std::string text = GameApi::get().text_of(e, call.arg(0));
+                if (is_command && (text.empty() || text[0] != '/')) text = "/" + text;  // 1.19+ sends commands without it
+                if (ScriptEngine::get().emit("send", [&](JSContext* ctx, JSValue o) {
+                        JS_SetPropertyStr(ctx, o, "text", JS_NewString(ctx, text.c_str()));
+                        JS_SetPropertyStr(ctx, o, "command", JS_NewBool(ctx, text.rfind("/", 0) == 0));
+                    }))
+                    call.cancel();
+            };
+        };
+        hook_all("hook.send", "", on_send(false));
+        hook_all("hook.command", "", on_send(true));
+    } else if (event == "attack") {
+        hook_all("hook.attack", "", [](Call& call) {
+            JNIEnv* e = call.env();
+            EntityInfo target;
+            bool known = GameApi::get().entity_info(e, call.arg(1), target);
+            if (ScriptEngine::get().emit("attack", [&](JSContext* ctx, JSValue o) {
+                    JS_SetPropertyStr(ctx, o, "target", known ? entity_to_js(ctx, target) : JS_NULL);
+                }))
+                call.cancel();
+        });
     } else {
         return false;
     }
-    if (id < 0) return false;
-    event_hooks_[event] = id;
+    if (ids.empty()) {
+        core.log("script event '" + event + "' has no hook point on this version");
+        return false;
+    }
+    event_hooks_[event] = ids;
     return true;
 }
 
@@ -424,8 +479,7 @@ bool ScriptEngine::load(const std::string& path, std::string& error, const std::
     script->ctx = JS_NewContext(rt_);
     JS_SetContextOpaque(script->ctx, script.get());
 
-    // The only things a script can reach: a global `umc` object. There is no file, network
-    // or process access in the context, and the Java side is only exposed through the curated API.
+    // Capabilities are installed only for granted permissions. Trusted Java access is explicit.
     JSContext* ctx = script->ctx;
     JSValue global = JS_GetGlobalObject(ctx);
     JSValue umc = JS_NewObject(ctx);
@@ -435,6 +489,7 @@ bool ScriptEngine::load(const std::string& path, std::string& error, const std::
     JS_SetPropertyStr(ctx, global, "umc", umc);
 
     const auto& allowed = script->permissions;
+    if (allowed.count("java")) install_java_api(ctx, global);
     JSValue game = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, game, "version", JS_NewString(ctx, Core::get().version().c_str()));
     if (allowed.count("player")) JS_SetPropertyStr(ctx, game, "player", JS_NewCFunction(ctx, js_game_player, "player", 0));
@@ -472,6 +527,10 @@ bool ScriptEngine::load(const std::string& path, std::string& error, const std::
         error = describe_exception(ctx);
         for (auto& [event, fns] : script->handlers)
             for (JSValue fn : fns) JS_FreeValue(ctx, fn);
+        for (auto& [id, fn] : script->hooks) {
+            Core::get().unhook(id);
+            JS_FreeValue(ctx, fn);
+        }
         JS_FreeContext(ctx);
         return false;
     }
@@ -491,6 +550,10 @@ bool ScriptEngine::unload(const std::string& name, std::string& error) {
         return false;
     }
     Script& script = *it->second;
+    for (auto& [id, fn] : script.hooks) {
+        Core::get().unhook(id);
+        JS_FreeValue(script.ctx, fn);
+    }
     for (auto& [event, fns] : script.handlers)
         for (JSValue fn : fns) JS_FreeValue(script.ctx, fn);
     JS_FreeContext(script.ctx);
@@ -510,20 +573,109 @@ std::vector<std::string> ScriptEngine::list() {
     return out;
 }
 
-void ScriptEngine::emit(const std::string& event) {
+JSValue ScriptEngine::add_java_hook(JSContext* ctx, const std::string& owner, const std::string& method,
+                                   const std::string& descriptor, JSValueConst callback) {
     std::lock_guard<std::recursive_mutex> lock(mu_);
-    if (!rt_) return;
+    Script* script = script_of(ctx);
+    if (!script->permissions.count("java")) return JS_ThrowRangeError(ctx, "Java hooks need the 'java' permission");
+    auto id = std::make_shared<int>(-1);
+    std::string name = script->name;
+    *id = Core::get().hook(owner, method, descriptor, [this, name, id, descriptor](Call& call) {
+        // Core can retain a callback snapshot during unload. Resolve its owner under the engine lock.
+        std::lock_guard<std::recursive_mutex> lock(mu_);
+        auto it = scripts_.find(name);
+        if (it == scripts_.end()) return;
+        Script& script = *it->second;
+        auto fn = script.hooks.find(*id);
+        if (fn == script.hooks.end()) return;
+        JS_UpdateStackTop(rt_);
+        JSValue callback = JS_DupValue(script.ctx, fn->second);
+        JSValue event = java_call_event(script.ctx, call, descriptor);
+        JSValue result = JS_EXCEPTION;
+        if (!JS_IsException(event)) {
+            Budget budget(kHandlerBudgetMs);
+            result = JS_Call(script.ctx, callback, JS_UNDEFINED, 1, &event);
+            expire_java_call(event);
+            JS_FreeValue(script.ctx, event);
+        }
+        if (JS_IsException(result)) {
+            Core::get().log("[" + name + "] Java hook error: " + describe_exception(script.ctx));
+            Core::get().unhook(*id);
+            auto remaining = script.hooks.find(*id);
+            if (remaining != script.hooks.end()) {
+                JS_FreeValue(script.ctx, remaining->second);
+                script.hooks.erase(remaining);
+            }
+        }
+        JS_FreeValue(script.ctx, callback);
+        JS_FreeValue(script.ctx, result);
+    });
+    if (*id < 0) return JS_ThrowReferenceError(ctx, "could not hook Java method");
+    script->hooks[*id] = JS_DupValue(ctx, callback);
+    return JS_NewInt32(ctx, *id);
+}
+
+JSValue ScriptEngine::remove_java_hook(JSContext* ctx, int id) {
+    std::lock_guard<std::recursive_mutex> lock(mu_);
+    Script* script = script_of(ctx);
+    auto it = script->hooks.find(id);
+    if (it == script->hooks.end()) return JS_FALSE;
+    Core::get().unhook(id);
+    JS_FreeValue(ctx, it->second);
+    script->hooks.erase(it);
+    return JS_TRUE;
+}
+
+namespace {
+
+// event.cancel() marks the event; emit() reads the flag back after each handler.
+JSValue js_event_cancel(JSContext* ctx, JSValueConst this_val, int, JSValueConst*) {
+    JS_SetPropertyStr(ctx, this_val, "cancelled", JS_TRUE);
+    return JS_UNDEFINED;
+}
+
+thread_local bool g_in_event = false;
+
+}  // namespace
+
+bool ScriptEngine::emit(const std::string& event, const EventFill& fill) {
+    // A handler that triggers the same kind of event (say, chatting from a chat handler) must not recurse.
+    if (g_in_event && fill) return false;
+    std::lock_guard<std::recursive_mutex> lock(mu_);
+    if (!rt_) return false;
     JS_UpdateStackTop(rt_);
+    bool cancelled = false;
+    struct Guard {
+        bool active;
+        explicit Guard(bool a) : active(a) { if (active) g_in_event = true; }
+        ~Guard() { if (active) g_in_event = false; }
+    } guard(fill != nullptr);
+
     for (auto& [name, script] : scripts_) {
         auto it = script->handlers.find(event);
         if (it == script->handlers.end()) continue;
         JSContext* ctx = script->ctx;
         bool failed = false;
         for (JSValue fn : it->second) {
+            JSValue ev = JS_UNDEFINED;
+            int argc = 0;
+            if (fill) {
+                ev = JS_NewObject(ctx);
+                JS_SetPropertyStr(ctx, ev, "cancelled", JS_FALSE);
+                JS_SetPropertyStr(ctx, ev, "cancel", JS_NewCFunction(ctx, js_event_cancel, "cancel", 0));
+                fill(ctx, ev);
+                argc = 1;
+            }
             JSValue r;
             {
                 Budget budget(kHandlerBudgetMs);
-                r = JS_Call(ctx, fn, JS_UNDEFINED, 0, nullptr);
+                r = JS_Call(ctx, fn, JS_UNDEFINED, argc, &ev);
+            }
+            if (fill) {
+                JSValue flag = JS_GetPropertyStr(ctx, ev, "cancelled");
+                if (JS_ToBool(ctx, flag)) cancelled = true;
+                JS_FreeValue(ctx, flag);
+                JS_FreeValue(ctx, ev);
             }
             if (JS_IsException(r)) {
                 Core::get().log("[" + name + "] error in '" + event + "' handler: " + describe_exception(ctx));
@@ -537,6 +689,7 @@ void ScriptEngine::emit(const std::string& event) {
             script->handlers.erase(it);
         }
     }
+    return cancelled;
 }
 
 }  // namespace umc

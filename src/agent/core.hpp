@@ -40,6 +40,7 @@ public:
     jobject on_enter(JNIEnv* env, jint site, jobject self, jobjectArray args);
     // Calls the hooked method's original body for Call::proceed().
     jobject invoke_original(JNIEnv* env, int site, jobject self, jobjectArray args);
+    bool set_argument(Call& call, int index, jobject value);
 
     // Blocks until log lines newer than `seq` exist (or the timeout passes) and returns them.
     std::vector<std::string> log_since(uint64_t& seq, int timeout_ms);
@@ -57,6 +58,7 @@ public:
     Side side() override { return side_; }
     bool remapped() override { return !mappings_.empty(); }
     std::string runtime_class_name(const std::string& named) override;
+    std::string runtime_descriptor(const std::string& descriptor) const { return mappings_.remap_desc(descriptor); }
     jclass find_class(JNIEnv* env, const std::string& owner) override;
     jmethodID find_method(JNIEnv* env, const std::string& owner, const std::string& name,
                           const std::string& desc) override;

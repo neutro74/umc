@@ -30,9 +30,11 @@ inline const std::vector<std::pair<std::string, std::string>>& known_permissions
     static const std::vector<std::pair<std::string, std::string>> list = {
         {"player", "read your position, rotation, health and name"},
         {"players", "read the position and name of other players near you"},
-        {"chat", "show messages in your chat window"},
+        {"chat", "read your chat, and send chat messages or commands as you"},
+        {"combat", "see the things you attack, and stop attacks from happening"},
         {"render", "draw on your screen (the HUD)"},
         {"storage", "keep small private files in its own folder (it can't see anything else on your computer)"},
+        {"java", "TRUSTED CODE: unrestricted JVM access, including files, network and processes; Java calls are not time-limited"},
     };
     return list;
 }

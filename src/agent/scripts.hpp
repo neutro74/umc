@@ -1,6 +1,7 @@
 // Script plugins written in JavaScript, each in its own QuickJS context.
 #pragma once
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -8,7 +9,8 @@
 #include <string>
 #include <vector>
 
-struct JSRuntime;
+#include "quickjs.h"
+
 
 namespace umc {
 
@@ -26,8 +28,15 @@ public:
 
     // Makes sure the game hook behind `event` exists. False when the event is unknown.
     bool ensure_event_hook(const std::string& event);
-    // Runs every handler registered for `event`. Called on the game thread.
-    void emit(const std::string& event);
+    // Fills the event object a handler receives. Called once per handler, in that script's context.
+    using EventFill = std::function<void(JSContext*, JSValue event_object)>;
+
+    // Runs every handler registered for `event` on the game thread. Handlers get an event object when
+    // `fill` is given, and can call event.cancel(). Returns true if any handler cancelled it.
+    bool emit(const std::string& event, const EventFill& fill = nullptr);
+    JSValue add_java_hook(JSContext* ctx, const std::string& owner, const std::string& method,
+                          const std::string& descriptor, JSValueConst callback);
+    JSValue remove_java_hook(JSContext* ctx, int id);
 
 private:
     ScriptEngine() = default;
@@ -36,7 +45,7 @@ private:
     std::recursive_mutex mu_;
     JSRuntime* rt_ = nullptr;
     std::map<std::string, std::unique_ptr<Script>> scripts_;
-    std::map<std::string, int> event_hooks_;  // event -> core hook id
+    std::map<std::string, std::vector<int>> event_hooks_;  // event -> core hook ids
 };
 
 }  // namespace umc

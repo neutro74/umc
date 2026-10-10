@@ -84,3 +84,26 @@ hook.render  net.minecraft.client.gui.Gui  m:render:(Lcom/mojang/blaze3d/vertex/
 hook.render  net.minecraft.client.gui.Gui  m:render:(F)V
 hook.render  net.minecraft.client.gui.GuiIngame  m:renderGameOverlay:(F)V
 hook.render  net.minecraft.client.gui.GuiIngame  m:renderGameOverlay:(FZII)V
+
+# Incoming chat. Where several candidates exist on one version they cover different message kinds, and
+# every one that exists is hooked. The first argument is the message.
+hook.chat  net.minecraft.client.gui.components.ChatComponent  m:addMessage:(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/MessageSignature;Lnet/minecraft/client/GuiMessageTag;)V
+hook.chat  net.minecraft.client.gui.components.ChatComponent  m:addMessage:(Lnet/minecraft/network/chat/Component;IIZ)V
+hook.chat  net.minecraft.client.gui.components.ChatComponent  m:addPlayerMessage:(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/MessageSignature;Lnet/minecraft/client/multiplayer/chat/GuiMessageTag;)V
+hook.chat  net.minecraft.client.gui.components.ChatComponent  m:addServerSystemMessage:(Lnet/minecraft/network/chat/Component;)V
+hook.chat  net.minecraft.client.gui.components.ChatComponent  m:addClientSystemMessage:(Lnet/minecraft/network/chat/Component;)V
+hook.chat  net.minecraft.client.gui.GuiNewChat  m:printChatMessageWithOptionalDeletion:(Lnet/minecraft/util/IChatComponent;I)V
+hook.chat  net.minecraft.client.gui.GuiNewChat  m:printChatMessageWithOptionalDeletion:(Lnet/minecraft/util/text/ITextComponent;I)V
+
+# Chat you send (the first argument is the text) and commands (1.19+, sent without the slash).
+hook.send     net.minecraft.client.multiplayer.ClientPacketListener  m:sendChat:(Ljava/lang/String;)V
+hook.send     net.minecraft.client.player.LocalPlayer  m:chat:(Ljava/lang/String;)V
+hook.send     net.minecraft.client.entity.EntityPlayerSP  m:sendChatMessage:(Ljava/lang/String;)V
+hook.send     net.minecraft.client.entity.EntityClientPlayerMP  m:sendChatMessage:(Ljava/lang/String;)V
+hook.send     net.minecraft.client.player.LocalPlayer  m:sendChat:(Ljava/lang/String;Lnet/minecraft/network/chat/Component;)V
+hook.command  net.minecraft.client.multiplayer.ClientPacketListener  m:sendCommand:(Ljava/lang/String;)V
+hook.command  net.minecraft.client.player.LocalPlayer  m:sendCommand:(Ljava/lang/String;Lnet/minecraft/network/chat/Component;)V
+
+# You attacking something: arguments are the player and the target.
+hook.attack  net.minecraft.client.multiplayer.MultiPlayerGameMode  m:attack:(Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/entity/Entity;)V
+hook.attack  net.minecraft.client.multiplayer.PlayerControllerMP  m:attackEntity:(Lnet/minecraft/entity/player/EntityPlayer;Lnet/minecraft/entity/Entity;)V

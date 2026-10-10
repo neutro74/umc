@@ -4,61 +4,13 @@
 usage: check.py <mappings cache dir> <version>...
 A label passes for a version when at least one of its candidates exists.
 """
-import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
+from mapdata import PRIMS, java_type, load_mappings, split_desc
+
 root = Path(__file__).resolve().parents[2]
-
-
-def load_mappings(path):
-    classes, current = {}, None
-    for line in path.read_text().splitlines():
-        if not line or line[0] == "#":
-            continue
-        if not line.startswith(" "):
-            current = line.split(" -> ")[0].strip().replace(".", "/")
-            classes[current] = {"m": set(), "f": set()}
-        elif current and line.strip().startswith("!f "):
-            classes[current]["f"].add((line.split(" -> ")[0].strip()[3:], None))  # type unknown
-        elif current and line.strip().startswith("!m "):
-            desc, name = line.split(" -> ")[0].strip()[3:].split(" ", 1)
-            classes[current]["m"].add((name, desc, None))  # named descriptor, kept as written
-        elif current:
-            lhs = re.sub(r"^\d+:\d+:", "", line.split(" -> ")[0].strip())
-            lhs = re.sub(r":\d+:\d+$", "", lhs)
-            ret, _, rest = lhs.partition(" ")
-            if "(" in rest:
-                name, args = rest[:-1].split("(", 1)
-                classes[current]["m"].add((name, args, ret))
-            else:
-                classes[current]["f"].add((rest, ret))
-    return classes
-
-
-PRIMS = {"V": "void", "Z": "boolean", "B": "byte", "C": "char", "S": "short",
-         "I": "int", "J": "long", "F": "float", "D": "double"}
-
-
-def java_type(desc):
-    dims = ""
-    while desc.startswith("["):
-        dims, desc = dims + "[]", desc[1:]
-    return (PRIMS[desc] if desc in PRIMS else desc[1:-1].replace("/", ".")) + dims
-
-
-def split_desc(desc):
-    params, i = [], 1
-    while desc[i] != ")":
-        start = i
-        while desc[i] == "[":
-            i += 1
-        if desc[i] == "L":
-            i = desc.index(";", i)
-        i += 1
-        params.append(java_type(desc[start:i]))
-    return ",".join(params), java_type(desc[i + 1:])
 
 
 def parse_table():
@@ -92,16 +44,31 @@ def exists(classes, owner, kind, name, desc):
     return (name, java_type(desc)) in cls["f"] or (name, None) in cls["f"]
 
 
+def hook_report(cache, versions):
+    """For each multi-candidate hook label, show which candidates exist per version."""
+    table = parse_table()
+    for label in ("hook.chat", "hook.send", "hook.command", "hook.attack"):
+        print(label)
+        for version in versions:
+            classes = load_mappings(cache / "mappings" / version / "client.txt")
+            found = [f"{o.split('/')[-1]}.{n}" for (o, k, n, d) in table[label] if exists(classes, o, k, n, d)]
+            print(f"  {version:<8} {', '.join(found) or '-'}")
+
+
 def main():
+    if sys.argv[1] == "--hooks":
+        hook_report(Path(sys.argv[2]), sys.argv[3:])
+        return 0
     cache, versions = Path(sys.argv[1]), sys.argv[2:]
     table = parse_table()
     failures = 0
     width = max(len(v) for v in versions)
     for version in versions:
         classes = load_mappings(cache / "mappings" / version / "client.txt")
-        legacy = any(m[2] is None for c in classes.values() for m in c["m"])
-        # Labels tagged modern.* only apply to Mojang-mapped versions, and legacy.* only to MCP ones.
         ok = {label: any(exists(classes, *c) for c in cands) for label, cands in table.items()}
+        # Before 1.19 commands share the outgoing chat method; newer versions split them.
+        if tuple(int(part) for part in version.split(".")) < (1, 19):
+            ok["hook.command"] = ok["hook.send"]
         # Screen size is one capability with two implementations; either one is enough.
         modern = all(ok[l] for l in ("minecraft.window", "window.width", "window.height"))
         old = all(ok[l] for l in ("scaled.new", "scaled.width", "scaled.height"))
