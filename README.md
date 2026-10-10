@@ -28,11 +28,11 @@ trace net.minecraft.world.entity.player.Player.jumpFromGround()
 ## Features
 
 - **Injection only.** Attach to a game that's already running, from any launcher. Files the game needs are staged where sandboxed launchers (like the Prism Flatpak) can read them.
-- **Method hooks from C++.** Run code at the start of any method, read its arguments, cancel it, or replace its return value. Hooks can be added before the class has loaded.
-- **Any version.** Mojang's ProGuard mappings are downloaded and applied automatically for obfuscated versions, so you always write `net.minecraft.client.Minecraft.tick`, never `flk.t`.
-- **Plugins.** Modules are plain shared libraries built against one header. Load, unload and reload them while the game runs.
+- **Script plugins.** Write a plugin in plain JavaScript, no compiler needed. It runs in a sandbox with no file, network or system access, can only use the parts of the game you approve, and can draw on your HUD. Share it as a single `.js` file.
+- **Method hooks from C++.** Run code at the start of any method, read its arguments, cancel it, replace its return value, or run the original and change what it returns.
+- **Any version, 1.7 to 26.x.** Mojang's mappings (1.14.4 and later) and MCP's (1.7 to 1.12) are fetched and applied automatically, so you always write the same readable names. 26.1 and later ship unobfuscated and need nothing.
 - **Inspection from the terminal.** List classes, fields and methods with readable names, call static methods, read and write static fields, trace calls with their arguments, dump class bytecode.
-- **Cross-platform.** Linux, Windows and macOS, client and server.
+- **Cross-platform.** Linux, Windows and macOS, client and server. Every push injects into a real vanilla server on all three.
 
 ## How it works
 
@@ -76,7 +76,10 @@ When several games are running, pick one with `-p <pid>` in front of any command
 | `mappings fetch\|import\|list` | manage the mappings cache |
 | `status`, `threads`, `mem`, `gc` | game and JVM state |
 | `modules`, `enable <m>`, `disable <m>`, `mod <m> [args]` | control modules |
-| `load <lib>`, `unload <plugin>`, `reload <plugin>` | manage plugins in the running game |
+| `install <file\|url>`, `uninstall <id>`, `scripts` | install, remove and list script plugins |
+| `script load <file.js>`, `script unload <id>`, `script list` | run a script without installing it |
+| `load <lib\|script.js>`, `unload <plugin>`, `reload <plugin>` | manage native plugins in the running game |
+| `game` | which game accessors resolved on this version |
 | `classes <filter>` | search loaded classes |
 | `fields <class>`, `methods <class>` | members with their readable names |
 | `map <class> [member]` | show how a name is mapped |
@@ -88,6 +91,57 @@ When several games are running, pick one with `-p <pid>` in front of any command
 | `log [n]`, `log -f` | agent log, or follow it live |
 
 Plugins in `~/.config/umc/plugins` (`%APPDATA%\umc\plugins` on Windows, `~/Library/Application Support/umc/plugins` on macOS) are loaded on every attach.
+
+## Script plugins
+
+A plugin is one JavaScript file. A header at the top says what it needs:
+
+```js
+// ==UMC==
+// @name         Coords HUD
+// @id           coords-hud
+// @version      1.0.0
+// @author       you
+// @description  Your position and the direction you're facing, on screen.
+// @permissions  player render
+// ==/UMC==
+
+umc.on("render", () => {
+    const me = game.player();
+    if (!me) return;
+    ui.rect(4, 4, 150, 16, 0x90101418);
+    ui.text(`XYZ ${me.x.toFixed(1)} ${me.y.toFixed(1)} ${me.z.toFixed(1)}`, 10, 8, 0xFFE6E8EB);
+});
+```
+
+Install it from a file or a link. UMC shows what it asks for, in plain words, and waits for a yes:
+
+```
+$ umc install https://example.com/coords-hud.js
+
+  Coords HUD  v1.0.0  by you
+  Your position and the direction you're facing, on screen.
+
+  It asks permission to:
+    - read your position, rotation, health and name  (player)
+    - draw on your screen (the HUD)  (render)
+
+Install Coords HUD? [y/N]
+```
+
+Installed scripts load every time you attach. `umc scripts` lists them and `umc uninstall <id>` removes one.
+
+**What a script can do.** Each script runs in its own QuickJS sandbox. It has no file, network, process or Java access, a memory cap, and a time limit on every call, so an infinite loop can't freeze the game. The only things it can reach are the objects below, and only the ones its approved permissions unlock. A script that asks for something it wasn't given just gets `undefined`.
+
+| Permission | Unlocks |
+| --- | --- |
+| *(always)* | `umc.log(...)`, `umc.on("tick", fn)`, `game.version` |
+| `player` | `game.player()`: name, uuid, id, x, y, z, yaw, pitch, health, onGround |
+| `players` | `game.players()`: the same for every player around you |
+| `chat` | `game.chat(text)`: a message in your own chat window |
+| `render` | `umc.on("render", fn)`, `ui.rect(x, y, w, h, argb)`, `ui.text(text, x, y, argb)`, `ui.width(text)`, `ui.screen()` |
+
+Scripts you load yourself with `umc script load <file>` are treated as local development code: they get what their header declares, or everything if they have no header. Examples are in [`examples/scripts`](examples/scripts).
 
 ## Writing a module
 

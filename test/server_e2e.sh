@@ -27,6 +27,8 @@ printf 'online-mode=false\nlevel-type=flat\nspawn-protection=0\nview-distance=4\
 
 java -Xmx1G -jar server.jar nogui > "$work/server.log" 2>&1 &
 server=$!
+# Git Bash on Windows hands out its own PIDs; the Windows PID is what umc needs.
+[ -r "/proc/$server/winpid" ] && server=$(cat "/proc/$server/winpid")
 for _ in $(seq 120); do grep -q "Done (" "$work/server.log" && break; sleep 1; done
 grep -q "Done (" "$work/server.log" || { echo "server never started"; tail -20 "$work/server.log"; exit 1; }
 
