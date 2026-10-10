@@ -38,6 +38,7 @@ add_library(umc_agent SHARED
   src/agent/core.cpp
   src/agent/commands.cpp
   src/agent/scripts.cpp
+  src/agent/game.cpp
   src/agent/classfile.cpp
   src/agent/mappings.cpp
   src/agent/server.cpp

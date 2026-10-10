@@ -4,6 +4,7 @@
 #include <sstream>
 
 #include "agent/core.hpp"
+#include "agent/game.hpp"
 #include "agent/scripts.hpp"
 #include "agent/util.hpp"
 #include "common/platform.hpp"
@@ -430,6 +431,7 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
                 "  fields|methods <class> [f] list members with deobfuscated names\n"
                 "  map <class> [member]       show mapping entries\n"
                 "  script load|unload|list    JavaScript plugins\n"
+                "  game                       which game accessors resolved on this version\n"
                 "  mappings load <file>       load ProGuard mappings (the CLI does this on inject)\n"
                 "  get <class> <field>        read a static field\n"
                 "  set <class> <field> <v>    write a static field\n"
@@ -460,6 +462,7 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
         return {true, "loaded " + std::to_string(mappings_.size()) + " class mappings\n"};
     }
     if (c == "mem" || c == "gc") return {true, cmd_mem(env, c == "gc")};
+    if (c == "game") return {true, GameApi::get().report(env)};
     if (c == "script") {
         std::string sub = args.size() > 1 ? args[1] : "list", err;
         if (sub == "list") {

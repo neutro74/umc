@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "agent/core.hpp"
+#include "agent/game.hpp"
 #include "agent/util.hpp"
 #include "quickjs.h"
 
@@ -83,6 +84,64 @@ JSValue js_on(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     return JS_UNDEFINED;
 }
 
+JNIEnv* current_env() {
+    JNIEnv* env = nullptr;
+    Core::get().vm()->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    return env;
+}
+
+JSValue entity_to_js(JSContext* ctx, const EntityInfo& e) {
+    JSValue o = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, o, "name", JS_NewString(ctx, e.name.c_str()));
+    JS_SetPropertyStr(ctx, o, "uuid", JS_NewString(ctx, e.uuid.c_str()));
+    JS_SetPropertyStr(ctx, o, "id", JS_NewInt32(ctx, e.id));
+    JS_SetPropertyStr(ctx, o, "x", JS_NewFloat64(ctx, e.x));
+    JS_SetPropertyStr(ctx, o, "y", JS_NewFloat64(ctx, e.y));
+    JS_SetPropertyStr(ctx, o, "z", JS_NewFloat64(ctx, e.z));
+    JS_SetPropertyStr(ctx, o, "yaw", JS_NewFloat64(ctx, e.yaw));
+    JS_SetPropertyStr(ctx, o, "pitch", JS_NewFloat64(ctx, e.pitch));
+    JS_SetPropertyStr(ctx, o, "health", JS_NewFloat64(ctx, e.health));
+    JS_SetPropertyStr(ctx, o, "onGround", JS_NewBool(ctx, e.on_ground));
+    return o;
+}
+
+// Every game call runs inside its own JNI frame so scripts can't leak local references.
+struct JniFrame {
+    JNIEnv* env;
+    explicit JniFrame(JNIEnv* e) : env(e) { env->PushLocalFrame(64); }
+    ~JniFrame() { env->PopLocalFrame(nullptr); }
+};
+
+JSValue js_game_player(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+    JNIEnv* env = current_env();
+    if (!env) return JS_NULL;
+    JniFrame frame(env);
+    EntityInfo info;
+    return GameApi::get().local_player(env, info) ? entity_to_js(ctx, info) : JS_NULL;
+}
+
+JSValue js_game_players(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+    JSValue array = JS_NewArray(ctx);
+    JNIEnv* env = current_env();
+    if (!env) return array;
+    JniFrame frame(env);
+    uint32_t i = 0;
+    for (auto& e : GameApi::get().players(env)) JS_SetPropertyUint32(ctx, array, i++, entity_to_js(ctx, e));
+    return array;
+}
+
+JSValue js_game_chat(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if (argc < 1) return JS_ThrowTypeError(ctx, "game.chat(text)");
+    const char* text = JS_ToCString(ctx, argv[0]);
+    if (!text) return JS_EXCEPTION;
+    std::string message = text;
+    JS_FreeCString(ctx, text);
+    JNIEnv* env = current_env();
+    if (!env) return JS_FALSE;
+    JniFrame frame(env);
+    return JS_NewBool(ctx, GameApi::get().chat(env, message));
+}
+
 }  // namespace
 
 ScriptEngine& ScriptEngine::get() {
@@ -136,6 +195,7 @@ bool ScriptEngine::load(const std::string& path, std::string& error) {
         return false;
     }
     ensure_runtime();
+    JS_UpdateStackTop(rt_);  // this request may be on a different thread than the last one
 
     auto script = std::make_unique<Script>();
     script->name = name;
@@ -152,6 +212,13 @@ bool ScriptEngine::load(const std::string& path, std::string& error) {
     JS_SetPropertyStr(ctx, umc, "log", JS_NewCFunction(ctx, js_log, "log", 1));
     JS_SetPropertyStr(ctx, umc, "on", JS_NewCFunction(ctx, js_on, "on", 2));
     JS_SetPropertyStr(ctx, global, "umc", umc);
+
+    JSValue game = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, game, "version", JS_NewString(ctx, Core::get().version().c_str()));
+    JS_SetPropertyStr(ctx, game, "player", JS_NewCFunction(ctx, js_game_player, "player", 0));
+    JS_SetPropertyStr(ctx, game, "players", JS_NewCFunction(ctx, js_game_players, "players", 0));
+    JS_SetPropertyStr(ctx, game, "chat", JS_NewCFunction(ctx, js_game_chat, "chat", 1));
+    JS_SetPropertyStr(ctx, global, "game", game);
     JS_FreeValue(ctx, global);
 
     JSValue result;
@@ -197,6 +264,8 @@ std::vector<std::string> ScriptEngine::list() {
 
 void ScriptEngine::emit(const std::string& event) {
     std::lock_guard<std::recursive_mutex> lock(mu_);
+    if (!rt_) return;
+    JS_UpdateStackTop(rt_);
     for (auto& [name, script] : scripts_) {
         auto it = script->handlers.find(event);
         if (it == script->handlers.end()) continue;

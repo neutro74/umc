@@ -220,7 +220,27 @@ void Core::detect_game(JNIEnv* env) {
                joined.find("KnotClient") != std::string::npos) {
         side_ = Side::Client;
     } else {
+        // Launchers like Prism pass game arguments over stdin, so the command line says nothing.
+        // The classes already loaded in the JVM do.
         side_ = Side::Server;
+        bool client = false, server = false;
+        jint count = 0;
+        jclass* classes = nullptr;
+        if (jvmti_->GetLoadedClasses(&count, &classes) == JVMTI_ERROR_NONE) {
+            for (jint i = 0; i < count; ++i) {
+                char* sig = nullptr;
+                if (jvmti_->GetClassSignature(classes[i], &sig, nullptr) == JVMTI_ERROR_NONE && sig) {
+                    std::string name = sig;
+                    client |= name == "Lnet/minecraft/client/main/Main;" || name == "Lnet/minecraft/client/Minecraft;";
+                    server |= name == "Lnet/minecraft/server/MinecraftServer;" || name == "Lnet/minecraft/server/Main;";
+                    jvmti_->Deallocate(reinterpret_cast<unsigned char*>(sig));
+                }
+                env->DeleteLocalRef(classes[i]);
+            }
+            jvmti_->Deallocate(reinterpret_cast<unsigned char*>(classes));
+        }
+        if (client) side_ = Side::Client;
+        else if (!server && joined.find("prismlauncher") != std::string::npos) side_ = Side::Client;
     }
 
     if (options_.count("version")) {
