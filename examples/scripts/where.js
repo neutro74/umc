@@ -1,3 +1,11 @@
+// ==UMC==
+// @name         Where Am I
+// @id           where-am-i
+// @version      1.0.0
+// @author       neutro74
+// @description  Logs your position every few seconds and says hello in chat.
+// @permissions  player players chat
+// ==/UMC==
 // Reports your position and facing every few seconds, and says hello in chat once.
 let ticks = 0;
 let greeted = false;

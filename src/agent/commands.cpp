@@ -473,7 +473,14 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
         }
         if (args.size() < 3) return {false, "usage: script load <file.js> | unload <name> | list\n"};
         if (sub == "load") {
-            if (!ScriptEngine::get().load(args[2], err)) return {false, err + "\n"};
+            // Optional 4th argument: comma-separated permissions the user approved ("none" for none).
+            std::set<std::string> grants;
+            if (args.size() > 3) {
+                std::istringstream gs(args[3]);
+                std::string g;
+                while (std::getline(gs, g, ',')) if (!g.empty() && g != "none") grants.insert(g);
+            }
+            if (!ScriptEngine::get().load(args[2], err, args.size() > 3 ? &grants : nullptr)) return {false, err + "\n"};
             return {true, "loaded " + args[2] + "\n"};
         }
         if (sub == "unload") {

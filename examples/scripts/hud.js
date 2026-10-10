@@ -1,3 +1,11 @@
+// ==UMC==
+// @name         Coords HUD
+// @id           coords-hud
+// @version      1.0.0
+// @author       neutro74
+// @description  A small panel with your coordinates and the direction you're facing.
+// @permissions  player render
+// ==/UMC==
 // A small HUD panel with your coordinates, facing and FPS-independent tick counter.
 let ticks = 0;
 umc.on("tick", () => { ticks++; });

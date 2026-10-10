@@ -93,6 +93,22 @@ sleep 0.5
 check "handler errors are logged" "error in 'tick' handler" u log 40
 check "list scripts" "counter" u script list
 check "unload script" "unloaded" u script unload counter
+check "load script with header" "loaded" u script load "$root/test/scripts/perms_denied.js"
+check "only declared permissions exist" "has game.player: function chat: undefined players: undefined ui: undefined" u log 40
+check "render needs its permission" "render blocked: the 'render' event needs the 'render' permission" u log 40
+u script unload denied >/dev/null
+check "grants narrow the permissions" "[]" bash -c "'$umc' -p $pid script load '$root/test/scripts/perms_denied.js' none >/dev/null; '$umc' -p $pid script list; '$umc' -p $pid script unload denied >/dev/null"
+
+echo "install"
+check "install shows permissions" "read your position" "$umc" -p $pid install "$root/examples/scripts/hud.js" --yes
+check "installed script is loaded" "coords-hud" u script list
+check "installed script gets its approved permissions" "[player render]" u script list
+check "scripts lists installs" "Coords HUD" "$umc" scripts
+check "install rejects a headerless script" "no // ==UMC== header" "$umc" install "$root/test/scripts/counter.js" --yes
+printf '// ==UMC==\n// @name Bad\n// @id bad\n// @permissions root\n// ==/UMC==\n' > "$work/bad.js"
+check "install rejects unknown permissions" "unknown permission 'root'" "$umc" install "$work/bad.js" --yes
+check "uninstall" "uninstalled coords-hud" "$umc" -p $pid uninstall coords-hud
+check "uninstall unloads" "gone" bash -c "'$umc' -p $pid script list | grep -q coords-hud && echo present || echo gone"
 
 kill $pid
 if [ $fails -gt 0 ]; then echo "$fails failed"; exit 1; fi

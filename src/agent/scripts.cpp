@@ -6,6 +6,7 @@
 
 #include "agent/core.hpp"
 #include "agent/game.hpp"
+#include "common/script_meta.hpp"
 #include "agent/util.hpp"
 #include "quickjs.h"
 
@@ -13,6 +14,7 @@ namespace umc {
 
 struct ScriptEngine::Script {
     std::string name, path;
+    std::set<std::string> permissions;
     JSContext* ctx = nullptr;
     std::map<std::string, std::vector<JSValue>> handlers;
 };
@@ -79,6 +81,8 @@ JSValue js_on(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (!name) return JS_EXCEPTION;
     std::string event = name;
     JS_FreeCString(ctx, name);
+    if (event == "render" && !script_of(ctx)->permissions.count("render"))
+        return JS_ThrowRangeError(ctx, "the 'render' event needs the 'render' permission");
     if (!ScriptEngine::get().ensure_event_hook(event)) return JS_ThrowRangeError(ctx, "unknown event '%s'", event.c_str());
     script_of(ctx)->handlers[event].push_back(JS_DupValue(ctx, argv[1]));
     return JS_UNDEFINED;
@@ -251,7 +255,7 @@ bool ScriptEngine::ensure_event_hook(const std::string& event) {
     return true;
 }
 
-bool ScriptEngine::load(const std::string& path, std::string& error) {
+bool ScriptEngine::load(const std::string& path, std::string& error, const std::set<std::string>* grants) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         error = "cannot read " + path;
@@ -272,9 +276,26 @@ bool ScriptEngine::load(const std::string& path, std::string& error) {
     ensure_runtime();
     JS_UpdateStackTop(rt_);  // this request may be on a different thread than the last one
 
+    ScriptMeta meta = parse_script_meta(source, name);
     auto script = std::make_unique<Script>();
-    script->name = name;
+    script->name = meta.has_header && !meta.id.empty() ? meta.id : name;
+    if (scripts_.count(script->name)) {
+        error = "a script named " + script->name + " is already loaded";
+        return false;
+    }
     script->path = path;
+    for (auto& p : meta.permissions) {
+        if (!is_known_permission(p)) {
+            error = "unknown permission '" + p + "'";
+            return false;
+        }
+        if (!grants || grants->count(p)) script->permissions.insert(p);
+    }
+    if (!meta.has_header && !grants) {  // plain file with no header: local development code
+        for (auto& [perm, text] : known_permissions()) script->permissions.insert(perm);
+        Core::get().log("[" + script->name + "] no header, granting every permission (local script)");
+    }
+    name = script->name;
     script->ctx = JS_NewContext(rt_);
     JS_SetContextOpaque(script->ctx, script.get());
 
@@ -288,19 +309,22 @@ bool ScriptEngine::load(const std::string& path, std::string& error) {
     JS_SetPropertyStr(ctx, umc, "on", JS_NewCFunction(ctx, js_on, "on", 2));
     JS_SetPropertyStr(ctx, global, "umc", umc);
 
+    const auto& allowed = script->permissions;
     JSValue game = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, game, "version", JS_NewString(ctx, Core::get().version().c_str()));
-    JS_SetPropertyStr(ctx, game, "player", JS_NewCFunction(ctx, js_game_player, "player", 0));
-    JS_SetPropertyStr(ctx, game, "players", JS_NewCFunction(ctx, js_game_players, "players", 0));
-    JS_SetPropertyStr(ctx, game, "chat", JS_NewCFunction(ctx, js_game_chat, "chat", 1));
+    if (allowed.count("player")) JS_SetPropertyStr(ctx, game, "player", JS_NewCFunction(ctx, js_game_player, "player", 0));
+    if (allowed.count("players")) JS_SetPropertyStr(ctx, game, "players", JS_NewCFunction(ctx, js_game_players, "players", 0));
+    if (allowed.count("chat")) JS_SetPropertyStr(ctx, game, "chat", JS_NewCFunction(ctx, js_game_chat, "chat", 1));
     JS_SetPropertyStr(ctx, global, "game", game);
 
-    JSValue ui = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, ui, "rect", JS_NewCFunction(ctx, js_ui_rect, "rect", 5));
-    JS_SetPropertyStr(ctx, ui, "text", JS_NewCFunction(ctx, js_ui_text, "text", 5));
-    JS_SetPropertyStr(ctx, ui, "width", JS_NewCFunction(ctx, js_ui_width, "width", 1));
-    JS_SetPropertyStr(ctx, ui, "screen", JS_NewCFunction(ctx, js_ui_screen, "screen", 0));
-    JS_SetPropertyStr(ctx, global, "ui", ui);
+    if (allowed.count("render")) {
+        JSValue ui = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, ui, "rect", JS_NewCFunction(ctx, js_ui_rect, "rect", 5));
+        JS_SetPropertyStr(ctx, ui, "text", JS_NewCFunction(ctx, js_ui_text, "text", 5));
+        JS_SetPropertyStr(ctx, ui, "width", JS_NewCFunction(ctx, js_ui_width, "width", 1));
+        JS_SetPropertyStr(ctx, ui, "screen", JS_NewCFunction(ctx, js_ui_screen, "screen", 0));
+        JS_SetPropertyStr(ctx, global, "ui", ui);
+    }
     JS_FreeValue(ctx, global);
 
     JSValue result;
@@ -316,10 +340,14 @@ bool ScriptEngine::load(const std::string& path, std::string& error) {
         return false;
     }
     JS_FreeValue(ctx, result);
-    Core::get().log("script loaded: " + name);
+    std::string perms;
+    for (auto& p : scripts_.count(name) ? std::set<std::string>() : script->permissions) perms += (perms.empty() ? "" : ", ") + p;
+    Core::get().log("script loaded: " + name + (perms.empty() ? " (no permissions)" : " (" + perms + ")"));
     scripts_[name] = std::move(script);
     return true;
 }
+
+bool ScriptEngine::has_permission(const void*, const std::string&) { return true; }
 
 bool ScriptEngine::unload(const std::string& name, std::string& error) {
     std::lock_guard<std::recursive_mutex> lock(mu_);
@@ -340,7 +368,11 @@ bool ScriptEngine::unload(const std::string& name, std::string& error) {
 std::vector<std::string> ScriptEngine::list() {
     std::lock_guard<std::recursive_mutex> lock(mu_);
     std::vector<std::string> out;
-    for (auto& [name, script] : scripts_) out.push_back(name + "  " + script->path);
+    for (auto& [name, script] : scripts_) {
+        std::string perms;
+        for (auto& p : script->permissions) perms += (perms.empty() ? "" : " ") + p;
+        out.push_back(name + "  [" + perms + "]");
+    }
     return out;
 }
 

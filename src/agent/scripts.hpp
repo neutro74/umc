@@ -3,6 +3,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -17,9 +18,12 @@ public:
 
     static ScriptEngine& get();
 
-    bool load(const std::string& path, std::string& error);
+    // `grants` limits which of the script's declared permissions it receives; null grants everything
+    // it declares (or everything, for scripts without a header, which are treated as local dev code).
+    bool load(const std::string& path, std::string& error, const std::set<std::string>* grants = nullptr);
     bool unload(const std::string& name, std::string& error);
     std::vector<std::string> list();
+    bool has_permission(const void* ctx, const std::string& permission);
 
     // Makes sure the game hook behind `event` exists. False when the event is unknown.
     bool ensure_event_hook(const std::string& event);

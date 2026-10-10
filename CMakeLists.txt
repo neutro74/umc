@@ -71,6 +71,7 @@ add_executable(umc
   src/cli/process_windows.cpp
   src/cli/hotspot_attach.cpp
   src/cli/mappings_fetch.cpp
+  src/cli/scripts.cpp
   src/common/platform.cpp)
 target_include_directories(umc PRIVATE src)
 target_link_libraries(umc PRIVATE Threads::Threads)

@@ -5,6 +5,7 @@
 
 #include "cli/inject.hpp"
 #include "cli/process.hpp"
+#include "cli/scripts.hpp"
 #include "common/shared.hpp"
 
 using namespace umc;
@@ -33,6 +34,8 @@ local
   ps [-a]                          list running Minecraft JVMs (-a: every JVM)
   attach [PID] [-o OPTS] [-l LIB]  inject into a running game (-l adds a plugin, repeatable)
   mappings fetch|import|list       manage obfuscation mappings
+  install <file|url> [--yes]       install a script plugin (shows what it asks for first)
+  uninstall <id> | scripts         remove a plugin, or list installed plugins
 
 in the game (-p picks the process when several have UMC)
   status | threads | mem | gc
@@ -96,6 +99,11 @@ int cmd_attach(int pid, const std::vector<std::string>& args) {
     if (!pick(pid, false, p)) return 1;
     std::vector<std::string> log;
     bool ok = inject(p, opts, log);
+    if (ok && !p.has_agent) {  // freshly injected: bring the installed scripts along
+        GameProcess live = p;
+        live.has_agent = true;
+        load_installed_scripts(live, log);
+    }
     for (auto& line : log) (ok ? std::cout : std::cerr) << line << "\n";
     return ok ? 0 : 1;
 }
@@ -145,6 +153,13 @@ int main(int argc, char** argv) {
     if (cmd == "ps") return cmd_ps(args.size() > 1 && args[1] == "-a");
     if (cmd == "mappings") return mappings_command({args.begin() + 1, args.end()});
     if (cmd == "attach") return cmd_attach(pid, args);
+    if (cmd == "install" || cmd == "uninstall" || cmd == "scripts") {
+        GameProcess target;
+        bool have = false;
+        for (auto& p : java_processes())
+            if (p.has_agent && (pid == 0 || p.pid == pid)) { target = p; have = true; break; }
+        return scripts_command(cmd, args, have ? &target : nullptr);
+    }
 
     GameProcess p;
     if (!pick(pid, true, p)) return 1;
