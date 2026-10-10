@@ -132,6 +132,7 @@ JSValue js_game_players(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 
 // Graphics object of the frame being drawn; only set while "render" handlers run.
 thread_local jobject g_graphics = nullptr;
+thread_local bool g_in_frame = false;
 
 uint32_t color_arg(JSContext* ctx, JSValueConst v) {
     double d = 0;
@@ -144,7 +145,7 @@ JSValue js_ui_rect(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     int v[4];
     for (int i = 0; i < 4; ++i) JS_ToInt32(ctx, &v[i], argv[i]);
     JNIEnv* env = current_env();
-    if (!env || !g_graphics) return JS_FALSE;
+    if (!env || !g_in_frame) return JS_FALSE;
     return JS_NewBool(ctx, GameApi::get().draw_rect(env, g_graphics, v[0], v[1], v[2], v[3], color_arg(ctx, argv[4])));
 }
 
@@ -159,7 +160,7 @@ JSValue js_ui_text(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     JS_ToInt32(ctx, &y, argv[2]);
     bool shadow = argc < 5 || JS_ToBool(ctx, argv[4]);
     JNIEnv* env = current_env();
-    if (!env || !g_graphics) return JS_FALSE;
+    if (!env || !g_in_frame) return JS_FALSE;
     return JS_NewBool(ctx, GameApi::get().draw_text(env, g_graphics, text, x, y, color_arg(ctx, argv[3]), shadow));
 }
 
@@ -177,7 +178,7 @@ JSValue js_ui_screen(JSContext* ctx, JSValueConst, int, JSValueConst*) {
     JSValue o = JS_NewObject(ctx);
     int w = 0, h = 0;
     JNIEnv* env = current_env();
-    if (env && g_graphics) GameApi::get().screen_size(env, g_graphics, w, h);
+    if (env && g_in_frame) GameApi::get().screen_size(env, g_graphics, w, h);
     JS_SetPropertyStr(ctx, o, "width", JS_NewInt32(ctx, w));
     JS_SetPropertyStr(ctx, o, "height", JS_NewInt32(ctx, h));
     return o;
@@ -225,10 +226,11 @@ bool ScriptEngine::ensure_event_hook(const std::string& event) {
         // The HUD draw method: Hud.extractRenderState on 26.x, Gui.render before that.
         auto draw = [](Call& call) {
             JNIEnv* env = call.env();
-            jobject g = call.arg(0);
-            if (!g || !GameApi::get().is_graphics(env, g)) return;
-            g_graphics = g;
+            jobject first = call.arg(0);
+            if (!GameApi::get().frame_token(env, first, g_graphics)) return;
+            g_in_frame = true;
             ScriptEngine::get().emit("render");
+            g_in_frame = false;
             g_graphics = nullptr;
         };
         // Hud exists from 26.x; before that Gui.render draws the HUD. The class may not have loaded yet.

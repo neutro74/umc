@@ -27,3 +27,9 @@ jobs:
           sudo apt-get install -y ninja-build
           rm -rf build
           test/run.sh
+      - name: Version coverage
+        if: runner.os == 'Linux'
+        run: |
+          versions="1.14.4 1.15.2 1.16.5 1.17.1 1.18.2 1.19.2 1.19.4 1.20.1 1.20.4 1.20.6 1.21 1.21.4 1.21.8"
+          for v in $versions; do build/umc mappings fetch $v > /dev/null; done
+          python3 test/versions/check.py "$HOME/.cache/umc" $versions
