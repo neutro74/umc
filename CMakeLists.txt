@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(umc VERSION 0.1.0 LANGUAGES CXX)
+project(umc VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,6 +30,17 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # miniz declares an older minimum than CM
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(INSTALL_PROJECT OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(miniz)
+
+# linenoise gives the interactive shell history, completion and live output on Linux and macOS.
+# The Windows console already provides line editing, so it isn't built there.
+if(NOT WIN32)
+  FetchContent_Declare(linenoise
+    GIT_REPOSITORY https://github.com/antirez/linenoise.git
+    GIT_TAG a473823d74b93eab2ba83480df16ed37617493f2)
+  FetchContent_MakeAvailable(linenoise)
+  add_library(linenoise STATIC ${linenoise_SOURCE_DIR}/linenoise.c)
+  target_include_directories(linenoise PUBLIC ${linenoise_SOURCE_DIR})
+endif()
 
 # The bridge class is defined into the target JVM at runtime, so it is compiled
 # for Java 8 to stay loadable by old Minecraft versions.
@@ -74,6 +85,9 @@ endif()
 
 add_executable(umc
   src/cli/main.cpp
+  src/cli/dispatch.cpp
+  src/cli/daemon.cpp
+  src/cli/repl.cpp
   src/cli/inject.cpp
   src/cli/process.cpp
   src/cli/process_linux.cpp
@@ -86,6 +100,9 @@ add_executable(umc
   src/common/platform.cpp)
 target_include_directories(umc PRIVATE src)
 target_link_libraries(umc PRIVATE miniz Threads::Threads)
+if(NOT WIN32)
+  target_link_libraries(umc PRIVATE linenoise)
+endif()
 if(MSVC)
   target_compile_options(umc PRIVATE /W4)
 else()

@@ -8,11 +8,15 @@
 #include <winsock2.h>
 #include <afunix.h>
 #include <direct.h>
+#include <io.h>
 #include <shellapi.h>
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -158,8 +162,16 @@ void close_socket(Socket s) {
 
 void remove_file(const std::string& path) { std::remove(path.c_str()); }
 
+namespace {
+const char* runtime_override() {
+    const char* v = std::getenv("UMC_RUNTIME_DIR");  // lets tests run beside a real install
+    return v && *v ? v : nullptr;
+}
+}  // namespace
+
 #if defined(_WIN32)
 std::string runtime_dir() {
+    if (const char* o = runtime_override()) return o;
     char tmp[MAX_PATH + 1] = {};
     GetTempPathA(MAX_PATH, tmp);
     return std::string(tmp) + "umc";
@@ -169,13 +181,13 @@ std::string cache_dir() { return env_or("LOCALAPPDATA", "C:\\") + "\\umc\\cache"
 std::string state_dir() { return env_or("LOCALAPPDATA", "C:\\") + "\\umc\\state"; }
 #elif defined(__APPLE__)
 // /tmp keeps socket paths short; Darwin's per-user TMPDIR is long enough to hit the sun_path limit.
-std::string runtime_dir() { return "/tmp/umc-" + std::to_string(getuid()); }
+std::string runtime_dir() { return runtime_override() ? runtime_override() : "/tmp/umc-" + std::to_string(getuid()); }
 std::string config_dir() { return home() + "/Library/Application Support/umc"; }
 std::string cache_dir() { return home() + "/Library/Caches/umc"; }
 std::string state_dir() { return home() + "/Library/Application Support/umc/state"; }
 #else
 // /tmp rather than XDG_RUNTIME_DIR: the game may run without that variable or inside a sandbox.
-std::string runtime_dir() { return "/tmp/umc-" + std::to_string(getuid()); }
+std::string runtime_dir() { return runtime_override() ? runtime_override() : "/tmp/umc-" + std::to_string(getuid()); }
 std::string config_dir() { return xdg("XDG_CONFIG_HOME", home() + "/.config") + "/umc"; }
 std::string cache_dir() { return xdg("XDG_CACHE_HOME", home() + "/.cache") + "/umc"; }
 std::string state_dir() { return xdg("XDG_STATE_HOME", home() + "/.local/state") + "/umc"; }
@@ -203,6 +215,64 @@ bool copy_file(const std::string& from, const std::string& to) {
     if (!in || !out) return false;
     out << in.rdbuf();
     return bool(out);
+}
+
+bool stdin_is_tty() {
+#if defined(_WIN32)
+    return _isatty(_fileno(stdin)) != 0;
+#else
+    return isatty(0) != 0;
+#endif
+}
+
+bool wait_readable(Socket s, int timeout_ms) {
+#if defined(_WIN32)
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(SOCKET(s), &set);
+    timeval tv{timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+    return select(0, &set, nullptr, nullptr, &tv) > 0;
+#else
+    pollfd p{int(s), POLLIN, 0};
+    return poll(&p, 1, timeout_ms) > 0;
+#endif
+}
+
+bool spawn_detached(const std::string& exe, const std::vector<std::string>& args) {
+#if defined(_WIN32)
+    std::string cmd = "\"" + exe + "\"";
+    for (auto& a : args) cmd += " \"" + a + "\"";
+    STARTUPINFOA si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                        nullptr, nullptr, &si, &pi))
+        return false;
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return true;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid > 0) {
+        int status = 0;
+        waitpid(pid, &status, 0);  // the child forks again and exits at once, so this returns quickly
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+    if (fork() != 0) _exit(0);
+    setsid();
+    int null = open("/dev/null", O_RDWR);
+    if (null >= 0) {
+        dup2(null, 0);
+        dup2(null, 1);
+        dup2(null, 2);
+    }
+    std::vector<char*> argv{const_cast<char*>(exe.c_str())};
+    for (auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+    argv.push_back(nullptr);
+    execv(exe.c_str(), argv.data());
+    _exit(127);
+#endif
 }
 
 int current_pid() {

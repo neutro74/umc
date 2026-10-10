@@ -47,6 +47,11 @@ bool file_exists(const std::string& path);
 bool copy_file(const std::string& from, const std::string& to);
 
 int current_pid();
+bool stdin_is_tty();
+// Starts `exe args...` detached from this process and terminal, so it outlives them.
+bool spawn_detached(const std::string& exe, const std::vector<std::string>& args);
+// Polls a socket for readable data. Returns true if data (or EOF) is ready within timeout_ms.
+bool wait_readable(Socket s, int timeout_ms);
 std::vector<std::string> self_args();
 std::string self_exe();
 

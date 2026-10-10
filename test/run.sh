@@ -16,7 +16,7 @@ g++ -std=c++17 -shared -fPIC -I"$root/include" -I"$jni" -I"$jni/linux" \
     "$root/test/fakemc/probe.cpp" -o "$work/probe.so"
 
 # Isolated cache and config so the test never touches the real ones.
-export XDG_CACHE_HOME=$work/cache XDG_CONFIG_HOME=$work/config
+export XDG_CACHE_HOME=$work/cache XDG_CONFIG_HOME=$work/config UMC_RUNTIME_DIR=$work/rt XDG_STATE_HOME=$work/state
 umc=$build/umc
 "$umc" mappings import 1.99.9 client "$root/test/fakemc/client.txt" >/dev/null
 fails=0
@@ -144,5 +144,33 @@ check "other players resolve" "legacy players: 1" u log 20
 check "chat reaches the game" "chat: hello from umc" cat "$work/game18.out"
 check "game accessors all resolve" "ok       minecraft.player" u game
 kill $pid
+echo "shell"
+java -cp "$work/game" net.minecraft.client.main.Main --accessToken test >"$work/shell.out" 2>&1 &
+pid=$!
+sleep 0.5
+"$umc" attach $pid -l "$build/tick_counter.so" -l "$work/probe.so" >/dev/null
+check "shell session in a pseudo-terminal" "all passed" bash -c "python3 '$root/test/shell_test.py' '$umc' $pid | tee '$work/shell.log' | grep -E 'FAIL' ; ! grep -q FAIL '$work/shell.log' && echo 'all passed'"
+sed -n '1,20p' "$work/shell.log"
+kill $pid
+
+echo "daemon"
+"$umc" mappings import 1.99.9 client "$root/test/fakemc/client.txt" >/dev/null
+check "daemon is not running yet" "not running" "$umc" daemon status
+check "daemon starts" "daemon started" "$umc" daemon start
+check "daemon reports no game" "no Minecraft running" "$umc" daemon status
+java -cp "$work/game" net.minecraft.client.main.Main --accessToken test >"$work/auto.out" 2>&1 &
+pid=$!
+for _ in $(seq 40); do "$umc" -p $pid ping >/dev/null 2>&1 && break; sleep 0.5; done
+check "daemon attached to a game nobody told it about" "pong" "$umc" -p $pid ping
+check "daemon tracks the game" "$pid  client  1.99.9  attached" "$umc" daemon status
+check "daemon log says what happened" "attached $pid" cat "$work/state/umc/daemon.log"
+check "installed scripts follow the daemon" "ticks" bash -c "printf '// ==UMC==\n// @name Auto\n// @id auto\n// @permissions player\n// ==/UMC==\numc.on(\"tick\", () => {});\n' > '$work/auto.js'; '$umc' install '$work/auto.js' --yes >/dev/null; echo ticks"
+kill $pid
+for _ in $(seq 20); do "$umc" daemon status | grep -q "no Minecraft running" && break; sleep 0.5; done
+check "daemon notices the game exited" "no Minecraft running" "$umc" daemon status
+check "daemon stops" "stopping" "$umc" daemon stop
+sleep 1
+check "daemon is gone" "not running" "$umc" daemon status
+
 if [ $fails -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"

@@ -19,6 +19,9 @@ std::string agent_library();
 // Injects, waits for the agent to answer and loads mappings. Progress goes to `log`.
 bool inject(const GameProcess& p, const InjectOptions& opts, std::vector<std::string>& log);
 
+// Asks a game's agent for its Minecraft version and side. False if it doesn't answer.
+bool agent_game_info(const GameProcess& p, std::string& version, std::string& side);
+
 // Mappings (mappings_fetch.cpp). Returns false on network errors; `available` reports whether
 // the version ships obfuscation mappings at all.
 bool fetch_mappings(std::string version, bool& available, std::string& message);

@@ -40,6 +40,14 @@ void parse_status(const std::string& status, std::string& version, std::string& 
 
 }  // namespace
 
+bool agent_game_info(const GameProcess& p, std::string& version, std::string& side) {
+    std::string reply;
+    if (!agent_request(p, {"status"}, reply) || reply.rfind("ok\n", 0) != 0) return false;
+    bool has_mappings = false;
+    parse_status(reply, version, side, has_mappings);
+    return !version.empty();
+}
+
 std::string agent_library() {
     if (const char* env = std::getenv("UMC_AGENT")) return env;
     fs::path dir = fs::path(plat::self_exe()).parent_path();
