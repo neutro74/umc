@@ -424,7 +424,7 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
                 "  modules                    list modules\n"
                 "  enable|disable <name>      toggle a module\n"
                 "  mod <name> [args...]       send a command to a module\n"
-                "  load <plugin.so>           load a plugin\n"
+                "  load <plugin.so|script.js> load a native plugin or a script\n"
                 "  unload|reload <plugin>     by path, file name, or one of its modules\n"
                 "inspect\n"
                 "  classes <filter>           search loaded classes\n"
@@ -518,7 +518,12 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
         return {true, out};
     }
     if (c == "load") {
-        if (args.size() < 2) return {false, "usage: load <plugin.so>\n"};
+        if (args.size() < 2) return {false, "usage: load <plugin.so | script.js>\n"};
+        if (args[1].size() > 3 && args[1].compare(args[1].size() - 3, 3, ".js") == 0) {
+            std::string err;
+            if (!ScriptEngine::get().load(args[1], err)) return {false, err + "\n"};
+            return {true, "loaded script " + args[1] + "\n"};
+        }
         std::string err;
         std::lock_guard<std::recursive_mutex> lock(mu_);
         if (!load_plugin(args[1], err)) return {false, err + "\n"};

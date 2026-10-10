@@ -40,7 +40,7 @@ local
 in the game (-p picks the process when several have UMC)
   status | threads | mem | gc
   modules | enable <m> | disable <m> | mod <m> [args...]
-  load <plugin> | unload <plugin> | reload <plugin>
+  load <plugin.so|script.js> | unload <plugin> | reload <plugin>
   classes <filter> | fields <class> | methods <class> | map <class> [member]
   get <class> <field> | set <class> <field> <value> | call <class> <method> [args...]
   dump <class> <file> | hooks | trace <class> <method> [desc] | untrace <id|all>

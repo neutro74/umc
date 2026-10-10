@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -33,3 +33,9 @@ jobs:
           versions="1.7.10 1.8 1.8.9 1.9.4 1.10.2 1.11 1.12.2 1.14.4 1.15.2 1.16.5 1.17.1 1.18.2 1.19.2 1.19.4 1.20.1 1.20.4 1.20.6 1.21 1.21.4 1.21.8"
           for v in $versions; do build/umc mappings fetch $v > /dev/null; done
           python3 test/versions/check.py "$HOME/.cache/umc" $versions
+      - name: Real server test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then umc=build/Release/umc.exe; else umc=build/umc; fi
+          test/server_e2e.sh "$umc" 1.21.4
+          test/server_e2e.sh "$umc" 26.3
