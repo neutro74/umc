@@ -144,7 +144,7 @@ Mod loaders that remap the game at runtime need their own naming scheme. NeoForg
 
 | | Linux | Windows | macOS |
 | --- | --- | --- | --- |
-| Builds | ✓ | CI | CI |
+| Builds | ✓ | ✓ | ✓ |
 | End-to-end tests | ✓ | not yet | not yet |
 | Live Minecraft | not yet | not yet | not yet |
 
