@@ -80,6 +80,20 @@ check "trace logs arguments" "computeScore(5, 10, abc)" u log 5
 check "untrace" "stopped 1" u untrace all
 check "reload plugin" "reloaded" u reload probe
 
+echo "scripts"
+check "load script" "loaded" u script load "$root/test/scripts/counter.js"
+check "script sees no host APIs" "sandbox: undefined undefined undefined undefined undefined undefined" u log 40
+sleep 1.2
+check "tick handlers run" "[counter] ticks" u log 40
+check "runaway loop is interrupted" "interrupted" u script load "$root/test/scripts/loop.js"
+check "game still ticking after loop" "pong" u ping
+check "unknown events are rejected" "unknown event" bash -c "echo 'umc.on(\"nope\", () => {})' > '$work/bad.js'; '$umc' -p $pid script load '$work/bad.js'"
+u script load "$root/test/scripts/broken.js" >/dev/null
+sleep 0.5
+check "handler errors are logged" "error in 'tick' handler" u log 40
+check "list scripts" "counter" u script list
+check "unload script" "unloaded" u script unload counter
+
 kill $pid
 if [ $fails -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"

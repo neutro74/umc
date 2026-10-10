@@ -4,6 +4,7 @@
 #include <sstream>
 
 #include "agent/core.hpp"
+#include "agent/scripts.hpp"
 #include "agent/util.hpp"
 #include "common/platform.hpp"
 
@@ -428,6 +429,7 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
                 "  classes <filter>           search loaded classes\n"
                 "  fields|methods <class> [f] list members with deobfuscated names\n"
                 "  map <class> [member]       show mapping entries\n"
+                "  script load|unload|list    JavaScript plugins\n"
                 "  mappings load <file>       load ProGuard mappings (the CLI does this on inject)\n"
                 "  get <class> <field>        read a static field\n"
                 "  set <class> <field> <v>    write a static field\n"
@@ -458,6 +460,25 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
         return {true, "loaded " + std::to_string(mappings_.size()) + " class mappings\n"};
     }
     if (c == "mem" || c == "gc") return {true, cmd_mem(env, c == "gc")};
+    if (c == "script") {
+        std::string sub = args.size() > 1 ? args[1] : "list", err;
+        if (sub == "list") {
+            auto names = ScriptEngine::get().list();
+            std::string out;
+            for (auto& n : names) out += n + "\n";
+            return {true, out.empty() ? "no scripts loaded\n" : out};
+        }
+        if (args.size() < 3) return {false, "usage: script load <file.js> | unload <name> | list\n"};
+        if (sub == "load") {
+            if (!ScriptEngine::get().load(args[2], err)) return {false, err + "\n"};
+            return {true, "loaded " + args[2] + "\n"};
+        }
+        if (sub == "unload") {
+            if (!ScriptEngine::get().unload(args[2], err)) return {false, err + "\n"};
+            return {true, "unloaded " + args[2] + "\n"};
+        }
+        return {false, "usage: script load <file.js> | unload <name> | list\n"};
+    }
     if (c == "untrace") {
         if (args.size() < 2) return {false, "usage: untrace <id|all>\n"};
         std::set<int> ids;

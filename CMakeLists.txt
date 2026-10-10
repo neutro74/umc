@@ -12,6 +12,15 @@ find_package(Java 1.8 REQUIRED COMPONENTS Development)
 find_package(JNI REQUIRED COMPONENTS JVM)
 find_package(Threads REQUIRED)
 
+# QuickJS-ng runs script plugins. Built without its std/os modules.
+include(FetchContent)
+FetchContent_Declare(quickjs
+  GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
+  GIT_TAG v0.17.0
+  GIT_SHALLOW TRUE)
+set(QJS_BUILD_LIBC OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(quickjs)
+
 # The bridge class is defined into the target JVM at runtime, so it is compiled
 # for Java 8 to stay loadable by old Minecraft versions.
 set(BRIDGE_SRC ${CMAKE_SOURCE_DIR}/src/java/umc/Bridge.java)
@@ -28,6 +37,7 @@ add_library(umc_agent SHARED
   src/agent/agent.cpp
   src/agent/core.cpp
   src/agent/commands.cpp
+  src/agent/scripts.cpp
   src/agent/classfile.cpp
   src/agent/mappings.cpp
   src/agent/server.cpp
@@ -35,7 +45,7 @@ add_library(umc_agent SHARED
   ${BRIDGE_HEADER})
 set_target_properties(umc_agent PROPERTIES OUTPUT_NAME umc)
 target_include_directories(umc_agent PRIVATE include src ${CMAKE_BINARY_DIR}/generated ${JNI_INCLUDE_DIRS})
-target_link_libraries(umc_agent PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(umc_agent PRIVATE qjs Threads::Threads ${CMAKE_DL_LIBS})
 if(MSVC)
   target_compile_options(umc_agent PRIVATE /W4)
 else()
