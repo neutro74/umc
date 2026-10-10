@@ -102,5 +102,10 @@ inline int Module::hook(Api& api, const std::string& owner, const std::string& m
 }  // namespace umc
 
 // Plugins export this symbol and register their modules from it.
-extern "C" void umc_register(umc::Api* api);
-#define UMC_PLUGIN extern "C" __attribute__((visibility("default"))) void umc_register(umc::Api* api)
+#if defined(_WIN32)
+#define UMC_EXPORT __declspec(dllexport)
+#else
+#define UMC_EXPORT __attribute__((visibility("default")))
+#endif
+extern "C" UMC_EXPORT void umc_register(umc::Api* api);
+#define UMC_PLUGIN extern "C" UMC_EXPORT void umc_register(umc::Api* api)
