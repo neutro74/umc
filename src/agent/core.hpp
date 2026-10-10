@@ -18,6 +18,11 @@
 
 namespace umc {
 
+inline std::string internal_name(std::string s) {
+    for (auto& c : s) if (c == '.') c = '/';
+    return s;
+}
+
 class Core final : public Api {
 public:
     static Core& get();
@@ -38,6 +43,9 @@ public:
 
     // Blocks until log lines newer than `seq` exist (or the timeout passes) and returns them.
     std::vector<std::string> log_since(uint64_t& seq, int timeout_ms);
+
+    // True when the mappings know this class. Always false without mappings.
+    bool mapped_class(const std::string& named) const { return mappings_.by_named(internal_name(named)) != nullptr; }
 
     jvmtiEnv* jvmti() const { return jvmti_; }
     JavaVM* vm() const { return vm_; }

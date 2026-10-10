@@ -26,6 +26,13 @@ public:
     std::vector<EntityInfo> players(JNIEnv* env);
     bool chat(JNIEnv* env, const std::string& text);
 
+    // HUD drawing. `graphics` is the object the game passes to its render method.
+    bool draw_rect(JNIEnv* env, jobject graphics, int x, int y, int w, int h, uint32_t argb);
+    bool draw_text(JNIEnv* env, jobject graphics, const std::string& text, int x, int y, uint32_t argb, bool shadow);
+    int text_width(JNIEnv* env, const std::string& text);
+    bool screen_size(JNIEnv* env, jobject graphics, int& w, int& h);
+    bool is_graphics(JNIEnv* env, jobject object);
+
     // One line per accessor: whether it resolved on this version.
     std::string report(JNIEnv* env);
 
@@ -51,7 +58,15 @@ private:
     bool boolean(JNIEnv* env, const Getter& g, jobject o);
     std::string str(JNIEnv* env, jobject o);
 
+    bool resolve_drawing(JNIEnv* env);
+
     bool resolved_ = false;
+    bool drawing_ready_ = false;
+    jclass graphics_ = nullptr;
+    jmethodID fill_ = nullptr, text_ = nullptr, gui_width_ = nullptr, gui_height_ = nullptr, font_width_ = nullptr;
+    bool text_returns_int_ = false;
+    jfieldID font_field_ = nullptr;
+    jobject font_ = nullptr;  // global ref
     std::chrono::steady_clock::time_point next_try_{};
     std::vector<std::pair<std::string, bool>> report_;
 

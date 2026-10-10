@@ -130,6 +130,59 @@ JSValue js_game_players(JSContext* ctx, JSValueConst, int, JSValueConst*) {
     return array;
 }
 
+// Graphics object of the frame being drawn; only set while "render" handlers run.
+thread_local jobject g_graphics = nullptr;
+
+uint32_t color_arg(JSContext* ctx, JSValueConst v) {
+    double d = 0;
+    JS_ToFloat64(ctx, &d, v);
+    return uint32_t(int64_t(d));
+}
+
+JSValue js_ui_rect(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if (argc < 5) return JS_ThrowTypeError(ctx, "ui.rect(x, y, width, height, 0xAARRGGBB)");
+    int v[4];
+    for (int i = 0; i < 4; ++i) JS_ToInt32(ctx, &v[i], argv[i]);
+    JNIEnv* env = current_env();
+    if (!env || !g_graphics) return JS_FALSE;
+    return JS_NewBool(ctx, GameApi::get().draw_rect(env, g_graphics, v[0], v[1], v[2], v[3], color_arg(ctx, argv[4])));
+}
+
+JSValue js_ui_text(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if (argc < 4) return JS_ThrowTypeError(ctx, "ui.text(text, x, y, 0xAARRGGBB, shadow = true)");
+    const char* t = JS_ToCString(ctx, argv[0]);
+    if (!t) return JS_EXCEPTION;
+    std::string text = t;
+    JS_FreeCString(ctx, t);
+    int x = 0, y = 0;
+    JS_ToInt32(ctx, &x, argv[1]);
+    JS_ToInt32(ctx, &y, argv[2]);
+    bool shadow = argc < 5 || JS_ToBool(ctx, argv[4]);
+    JNIEnv* env = current_env();
+    if (!env || !g_graphics) return JS_FALSE;
+    return JS_NewBool(ctx, GameApi::get().draw_text(env, g_graphics, text, x, y, color_arg(ctx, argv[3]), shadow));
+}
+
+JSValue js_ui_width(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if (argc < 1) return JS_NewInt32(ctx, 0);
+    const char* t = JS_ToCString(ctx, argv[0]);
+    if (!t) return JS_EXCEPTION;
+    std::string text = t;
+    JS_FreeCString(ctx, t);
+    JNIEnv* env = current_env();
+    return JS_NewInt32(ctx, env ? GameApi::get().text_width(env, text) : 0);
+}
+
+JSValue js_ui_screen(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+    JSValue o = JS_NewObject(ctx);
+    int w = 0, h = 0;
+    JNIEnv* env = current_env();
+    if (env && g_graphics) GameApi::get().screen_size(env, g_graphics, w, h);
+    JS_SetPropertyStr(ctx, o, "width", JS_NewInt32(ctx, w));
+    JS_SetPropertyStr(ctx, o, "height", JS_NewInt32(ctx, h));
+    return o;
+}
+
 JSValue js_game_chat(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (argc < 1) return JS_ThrowTypeError(ctx, "game.chat(text)");
     const char* text = JS_ToCString(ctx, argv[0]);
@@ -168,6 +221,26 @@ bool ScriptEngine::ensure_event_hook(const std::string& event) {
                  ? core.hook("net.minecraft.server.MinecraftServer", "tickServer", "", fire)
                  : core.hook("net.minecraft.client.Minecraft", "tick", "()V", fire);
         if (id < 0) core.log("script event 'tick' could not be hooked");
+    } else if (event == "render") {
+        // The HUD draw method: Hud.extractRenderState on 26.x, Gui.render before that.
+        auto draw = [](Call& call) {
+            JNIEnv* env = call.env();
+            jobject g = call.arg(0);
+            if (!g || !GameApi::get().is_graphics(env, g)) return;
+            g_graphics = g;
+            ScriptEngine::get().emit("render");
+            g_graphics = nullptr;
+        };
+        // Hud exists from 26.x; before that Gui.render draws the HUD. The class may not have loaded yet.
+        JNIEnv* env = current_env();
+        const char* hud = "net.minecraft.client.gui.Hud";
+        // Old versions have Gui.render; 26.x moved the drawing into Hud. If Gui isn't loaded yet, assume modern.
+        bool legacy = core.remapped() ? !core.mapped_class(hud) && core.mapped_class("net.minecraft.client.gui.Gui")
+                                      : env && core.find_method(env, "net.minecraft.client.gui.Gui", "render", "");
+        bool modern = !legacy;
+        id = modern ? core.hook(hud, "extractRenderState", "", draw)
+                    : core.hook("net.minecraft.client.gui.Gui", "render", "", draw);
+        if (id < 0) core.log("script event 'render' could not be hooked");
     } else {
         return false;
     }
@@ -219,6 +292,13 @@ bool ScriptEngine::load(const std::string& path, std::string& error) {
     JS_SetPropertyStr(ctx, game, "players", JS_NewCFunction(ctx, js_game_players, "players", 0));
     JS_SetPropertyStr(ctx, game, "chat", JS_NewCFunction(ctx, js_game_chat, "chat", 1));
     JS_SetPropertyStr(ctx, global, "game", game);
+
+    JSValue ui = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, ui, "rect", JS_NewCFunction(ctx, js_ui_rect, "rect", 5));
+    JS_SetPropertyStr(ctx, ui, "text", JS_NewCFunction(ctx, js_ui_text, "text", 5));
+    JS_SetPropertyStr(ctx, ui, "width", JS_NewCFunction(ctx, js_ui_width, "width", 1));
+    JS_SetPropertyStr(ctx, ui, "screen", JS_NewCFunction(ctx, js_ui_screen, "screen", 0));
+    JS_SetPropertyStr(ctx, global, "ui", ui);
     JS_FreeValue(ctx, global);
 
     JSValue result;

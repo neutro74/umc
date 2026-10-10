@@ -102,8 +102,79 @@ bool GameApi::resolve(JNIEnv* env) {
     return resolved_;
 }
 
+// Class names the graphics object has had across versions, newest first.
+const char* kGraphicsNames[] = {"net.minecraft.client.gui.GuiGraphicsExtractor", "net.minecraft.client.gui.GuiGraphics"};
+
+bool GameApi::resolve_drawing(JNIEnv* env) {
+    if (drawing_ready_) return true;
+    Core& core = Core::get();
+    std::string owner;
+    for (const char* name : kGraphicsNames)
+        if ((graphics_ = core.find_class(env, name))) {
+            owner = name;
+            break;
+        }
+    if (!graphics_ || !resolve(env)) return false;
+
+    fill_ = core.find_method(env, owner, "fill", "(IIIII)V");
+    text_ = core.find_method(env, owner, "text", "(Lnet/minecraft/client/gui/Font;Ljava/lang/String;IIIZ)V");
+    if (!text_) text_ = core.find_method(env, owner, "drawString", "(Lnet/minecraft/client/gui/Font;Ljava/lang/String;IIIZ)I");
+    text_returns_int_ = text_ && !core.find_method(env, owner, "text", "(Lnet/minecraft/client/gui/Font;Ljava/lang/String;IIIZ)V");
+    gui_width_ = core.find_method(env, owner, "guiWidth", "()I");
+    gui_height_ = core.find_method(env, owner, "guiHeight", "()I");
+    font_field_ = core.find_field(env, kMinecraft, "font", "Lnet/minecraft/client/gui/Font;");
+    font_width_ = core.find_method(env, "net.minecraft.client.gui.Font", "width", "(Ljava/lang/String;)I");
+    report_.push_back({"GuiGraphics.fill", fill_ != nullptr});
+    report_.push_back({"GuiGraphics.text", text_ != nullptr});
+    report_.push_back({"Minecraft.font", font_field_ != nullptr});
+    drawing_ready_ = fill_ && text_ && font_field_;
+    return drawing_ready_;
+}
+
+bool GameApi::is_graphics(JNIEnv* env, jobject object) {
+    if (!object || !resolve_drawing(env)) return false;
+    return env->IsInstanceOf(object, graphics_);
+}
+
+bool GameApi::draw_rect(JNIEnv* env, jobject graphics, int x, int y, int w, int h, uint32_t argb) {
+    if (!graphics || !resolve_drawing(env) || !env->IsInstanceOf(graphics, graphics_)) return false;
+    env->CallVoidMethod(graphics, fill_, x, y, x + w, y + h, jint(argb));
+    return !cleared(env);
+}
+
+bool GameApi::draw_text(JNIEnv* env, jobject graphics, const std::string& text, int x, int y, uint32_t argb, bool shadow) {
+    if (!graphics || !resolve_drawing(env) || !env->IsInstanceOf(graphics, graphics_)) return false;
+    jobject mc = env->CallStaticObjectMethod(mc_, get_instance_);
+    if (cleared(env) || !mc) return false;
+    jobject font = env->GetObjectField(mc, font_field_);
+    jstring js = env->NewStringUTF(text.c_str());
+    if (text_returns_int_) env->CallIntMethod(graphics, text_, font, js, x, y, jint(argb), jboolean(shadow));
+    else env->CallVoidMethod(graphics, text_, font, js, x, y, jint(argb), jboolean(shadow));
+    env->DeleteLocalRef(mc);
+    return !cleared(env);
+}
+
+int GameApi::text_width(JNIEnv* env, const std::string& text) {
+    if (!resolve_drawing(env) || !font_width_) return int(text.size()) * 6;
+    jobject mc = env->CallStaticObjectMethod(mc_, get_instance_);
+    if (cleared(env) || !mc) return 0;
+    jobject font = env->GetObjectField(mc, font_field_);
+    jstring js = env->NewStringUTF(text.c_str());
+    int w = env->CallIntMethod(font, font_width_, js);
+    env->DeleteLocalRef(mc);
+    return cleared(env) ? 0 : w;
+}
+
+bool GameApi::screen_size(JNIEnv* env, jobject graphics, int& w, int& h) {
+    if (!graphics || !resolve_drawing(env) || !gui_width_ || !gui_height_) return false;
+    w = env->CallIntMethod(graphics, gui_width_);
+    h = env->CallIntMethod(graphics, gui_height_);
+    return !cleared(env);
+}
+
 std::string GameApi::report(JNIEnv* env) {
     resolve(env);
+    resolve_drawing(env);
     if (report_.empty()) return "game classes are not loaded yet\n";
     std::string out;
     for (auto& [label, ok] : report_) out += std::string(ok ? "ok       " : "missing  ") + label + "\n";
