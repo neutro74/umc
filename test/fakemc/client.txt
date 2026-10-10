@@ -1,0 +1,8 @@
+# fake mappings in Mojang's ProGuard format
+net.minecraft.client.Minecraft -> o.a:
+    int tickCount -> c
+    java.lang.String state -> state
+    3:20:void tick() -> b
+    22:23:int computeScore(int,long,java.lang.String) -> d
+net.minecraft.client.main.Main -> net.minecraft.client.main.Main:
+    5:15:void main(java.lang.String[]) -> main
