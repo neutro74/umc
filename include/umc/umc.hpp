@@ -26,6 +26,11 @@ public:
     virtual jfloat arg_float(int index) = 0;
     virtual jdouble arg_double(int index) = 0;
 
+    // Runs the original method now and makes its result the return value (primitives come back
+    // boxed, void gives null). Code after proceed() runs after the original, so a hook can wrap it.
+    // A return_*() call afterwards still replaces the result.
+    virtual jobject proceed() = 0;
+
     // Skip the original method body. Primitive returns become 0, objects null.
     virtual void cancel() = 0;
     // Skip the body and return this value. Primitive methods take a boxed value.

@@ -15,10 +15,20 @@ public:
             std::lock_guard<std::mutex> lock(mu_);
             seen_ = std::to_string(c.arg_int(0)) + "," + std::to_string(c.arg_long(1));
             if (override_ >= 0) c.return_int(override_);
+            else if (wrap_) {
+                jobject original = c.proceed();  // run the real method, then adjust its result
+                jclass integer = c.env()->FindClass("java/lang/Integer");
+                jint v = c.env()->CallIntMethod(original, c.env()->GetMethodID(integer, "intValue", "()I"));
+                c.return_int(v + 1000);
+            }
         });
     }
 
     std::string on_command(umc::Api& api, JNIEnv* env, const std::vector<std::string>& args) override {
+        if (!args.empty() && args[0] == "wrap") {
+            wrap_ = true;
+            return "ok";
+        }
         if (!args.empty() && args[0] == "override") {
             override_ = std::stoi(args.at(1));
             return "ok";
@@ -38,6 +48,7 @@ private:
     std::mutex mu_;
     std::string seen_ = "none";
     std::atomic<int> override_{-1};
+    std::atomic<bool> wrap_{false};
 };
 
 }  // namespace

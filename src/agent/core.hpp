@@ -33,6 +33,8 @@ public:
                             unsigned char** new_data);
     void on_class_prepare(JNIEnv* env, jclass cls);
     jobject on_enter(JNIEnv* env, jint site, jobject self, jobjectArray args);
+    // Calls the hooked method's original body for Call::proceed().
+    jobject invoke_original(JNIEnv* env, int site, jobject self, jobjectArray args);
 
     // Blocks until log lines newer than `seq` exist (or the timeout passes) and returns them.
     std::vector<std::string> log_since(uint64_t& seq, int timeout_ms);
@@ -69,6 +71,9 @@ private:
         int id;
         std::string cls, name, desc;
         std::vector<int> hooks;
+        jclass owner = nullptr;      // resolved lazily for proceed()
+        jmethodID method = nullptr;
+        bool is_static = false;
     };
     struct ModuleSlot {
         std::unique_ptr<Module> module;

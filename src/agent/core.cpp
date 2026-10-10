@@ -60,10 +60,13 @@ std::string read_resource(JNIEnv* env, jobject loader, const char* name) {
     return out;
 }
 
+// Set while proceed() re-enters a hooked method, so its own prologue lets it run.
+thread_local int g_bypass_site = -1;
+
 class CallImpl final : public Call {
 public:
-    CallImpl(Core& core, JNIEnv* env, jobject self, jobjectArray args)
-        : core_(core), env_(env), self_(self), args_(args) {}
+    CallImpl(Core& core, JNIEnv* env, int site, jobject self, jobjectArray args)
+        : core_(core), env_(env), site_(site), self_(self), args_(args) {}
 
     JNIEnv* env() override { return env_; }
     jobject self() override { return self_; }
@@ -76,6 +79,13 @@ public:
     jfloat arg_float(int i) override { return core_.unbox(env_, arg(i), 'F').f; }
     jdouble arg_double(int i) override { return core_.unbox(env_, arg(i), 'D').d; }
 
+    jobject proceed() override {
+        jobject r = core_.invoke_original(env_, site_, self_, args_);
+        if (env_->ExceptionCheck()) threw = true;  // leave it pending so it propagates from the method
+        finish(r);
+        return r;
+    }
+
     void cancel() override { finish(nullptr); }
     void return_object(jobject v) override { finish(v); }
     void return_int(jint v) override { jvalue j; j.i = v; finish(core_.box(env_, "java/lang/Integer", "(I)Ljava/lang/Integer;", j)); }
@@ -84,12 +94,14 @@ public:
     void return_double(jdouble v) override { jvalue j; j.d = v; finish(core_.box(env_, "java/lang/Double", "(D)Ljava/lang/Double;", j)); }
 
     bool done = false;
+    bool threw = false;
     jobject result = nullptr;
 
 private:
     void finish(jobject v) { done = true; result = v; }
     Core& core_;
     JNIEnv* env_;
+    int site_;
     jobject self_;
     jobjectArray args_;
 };
@@ -602,6 +614,10 @@ void Core::on_class_prepare(JNIEnv* env, jclass cls) {
 }
 
 jobject Core::on_enter(JNIEnv* env, jint site, jobject self, jobjectArray args) {
+    if (g_bypass_site == site) {
+        g_bypass_site = -1;
+        return env->NewLocalRef(continue_);
+    }
     std::vector<std::shared_ptr<HookFn>> fns;
     {
         std::lock_guard<std::recursive_mutex> lock(mu_);
@@ -611,17 +627,114 @@ jobject Core::on_enter(JNIEnv* env, jint site, jobject self, jobjectArray args) 
                 if (it != hooks_.end()) fns.push_back(it->second.fn);
             }
     }
-    CallImpl call(*this, env, self, args);
+    CallImpl call(*this, env, site, self, args);
     for (auto& fn : fns) {
         try {
             (*fn)(call);
         } catch (const std::exception& e) {
             log(std::string("hook threw: ") + e.what());
         }
+        if (call.threw) return nullptr;  // the original's exception propagates out of the method
         if (env->ExceptionCheck()) log("hook left a java exception: " + java_exception(env));
         if (call.done) break;
     }
     return call.done ? call.result : env->NewLocalRef(continue_);
+}
+
+jobject Core::invoke_original(JNIEnv* env, int site, jobject self, jobjectArray args) {
+    jclass cls = nullptr;
+    jmethodID mid = nullptr;
+    bool is_static = false;
+    std::string desc;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mu_);
+        if (site < 0 || size_t(site) >= sites_.size()) return nullptr;
+        Site& s = sites_[size_t(site)];
+        if (!s.method) {
+            jclass c = find_class(env, s.cls);
+            jint count = 0;
+            jmethodID* methods = nullptr;
+            if (c && jvmti_->GetClassMethods(c, &count, &methods) == JVMTI_ERROR_NONE) {
+                for (jint i = 0; i < count && !s.method; ++i) {
+                    char *n = nullptr, *sig = nullptr;
+                    jvmti_->GetMethodName(methods[i], &n, &sig, nullptr);
+                    if (s.name == n && s.desc == sig) {
+                        jint mods = 0;
+                        jvmti_->GetMethodModifiers(methods[i], &mods);
+                        s.method = methods[i];
+                        s.is_static = mods & 0x0008;
+                        s.owner = c;
+                    }
+                    jvmti_->Deallocate(reinterpret_cast<unsigned char*>(n));
+                    jvmti_->Deallocate(reinterpret_cast<unsigned char*>(sig));
+                }
+                jvmti_->Deallocate(reinterpret_cast<unsigned char*>(methods));
+            }
+            if (!s.method) {
+                log("proceed: cannot resolve " + dotted(s.cls) + "." + s.name);
+                return nullptr;
+            }
+        }
+        cls = s.owner;
+        mid = s.method;
+        is_static = s.is_static;
+        desc = s.desc;
+    }
+
+    // Unbox the Object[] the prologue built back into the method's parameter types.
+    std::vector<jvalue> values;
+    size_t i = 1;
+    int index = 0;
+    char ret = 'V';
+    while (i < desc.size()) {
+        if (desc[i] == ')') {
+            ret = desc[i + 1];
+            break;
+        }
+        size_t start = i;
+        while (desc[i] == '[') ++i;
+        if (desc[i] == 'L') i = desc.find(';', i);
+        ++i;
+        jobject a = env->GetObjectArrayElement(args, index++);
+        jvalue v{};
+        switch (i - start == 1 ? desc[start] : 'L') {
+        case 'Z': v.z = unbox(env, a, 'I').i != 0; break;
+        case 'B': v.b = jbyte(unbox(env, a, 'I').i); break;
+        case 'C': v.c = jchar(unbox(env, a, 'I').i); break;
+        case 'S': v.s = jshort(unbox(env, a, 'I').i); break;
+        case 'I': v.i = unbox(env, a, 'I').i; break;
+        case 'J': v.j = unbox(env, a, 'J').j; break;
+        case 'F': v.f = unbox(env, a, 'F').f; break;
+        case 'D': v.d = unbox(env, a, 'D').d; break;
+        default: v.l = a;
+        }
+        values.push_back(v);
+    }
+    if (ret == '[') ret = 'L';
+
+    const jvalue* a = values.data();
+    jvalue r{};
+    jobject boxed = nullptr;
+    g_bypass_site = site;
+#define UMC_CALL(Type) (is_static ? env->CallStatic##Type##MethodA(cls, mid, a) : env->CallNonvirtual##Type##MethodA(self, cls, mid, a))
+    switch (ret) {
+    case 'V': UMC_CALL(Void); break;
+    case 'Z': r.z = UMC_CALL(Boolean); boxed = box(env, "java/lang/Boolean", "(Z)Ljava/lang/Boolean;", r); break;
+    case 'B': r.i = UMC_CALL(Byte); break;
+    case 'C': r.i = UMC_CALL(Char); break;
+    case 'S': r.i = UMC_CALL(Short); break;
+    case 'I': r.i = UMC_CALL(Int); break;
+    case 'J': r.j = UMC_CALL(Long); boxed = box(env, "java/lang/Long", "(J)Ljava/lang/Long;", r); break;
+    case 'F': r.f = UMC_CALL(Float); boxed = box(env, "java/lang/Float", "(F)Ljava/lang/Float;", r); break;
+    case 'D': r.d = UMC_CALL(Double); boxed = box(env, "java/lang/Double", "(D)Ljava/lang/Double;", r); break;
+    default: boxed = UMC_CALL(Object);
+    }
+#undef UMC_CALL
+    g_bypass_site = -1;
+    // Byte/char/short/int all come back through Bridge.asInt, so an Integer serves for each.
+    if (std::string("BCSI").find(ret) != std::string::npos && !env->ExceptionCheck())
+        boxed = box(env, "java/lang/Integer", "(I)Ljava/lang/Integer;", r);
+    return boxed;
 }
 
 jobject Core::box(JNIEnv* env, const char* cls, const char* sig, jvalue v) {

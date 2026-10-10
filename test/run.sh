@@ -61,6 +61,9 @@ check "hooks are patched" "site(s) patched" u hooks
 check "ticks are counted" " ticks" u mod tick_counter count
 check "args are boxed" "args=5,10" u mod probe
 check "field and call lookup" "field=found call=7" u mod probe field
+u mod probe wrap >/dev/null
+sleep 0.6
+check "proceed wraps the original" "score 1023" tail -n 3 "$work/game.out"
 u mod probe override 777 >/dev/null
 sleep 0.6
 check "return override" "score 777" tail -n 3 "$work/game.out"
