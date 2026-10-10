@@ -23,7 +23,6 @@ public:
     bool load(const std::string& path, std::string& error, const std::set<std::string>* grants = nullptr);
     bool unload(const std::string& name, std::string& error);
     std::vector<std::string> list();
-    bool has_permission(const void* ctx, const std::string& permission);
 
     // Makes sure the game hook behind `event` exists. False when the event is unknown.
     bool ensure_event_hook(const std::string& event);

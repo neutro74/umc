@@ -5,7 +5,7 @@ set -uo pipefail
 
 umc=$(cd "$(dirname "$1")" && pwd)/$(basename "$1") version=$2
 work=$(mktemp -d)
-trap 'kill $server 2>/dev/null; sleep 1; rm -rf "$work"' EXIT
+trap 'kill $shell_pid 2>/dev/null; sleep 1; rm -rf "$work"' EXIT
 export XDG_CACHE_HOME=$work/cache XDG_CONFIG_HOME=$work/config
 fails=0
 
@@ -23,10 +23,11 @@ jar_url=$(curl -fsSL "$meta_url" | "$PY" -c "import json,sys; print(json.load(sy
 mkdir -p "$work/server" && cd "$work/server"
 curl -fsSL -o server.jar "$jar_url"
 echo "eula=true" > eula.txt
-printf 'online-mode=false\nlevel-type=flat\nspawn-protection=0\nview-distance=4\n' > server.properties
+printf 'online-mode=false\nlevel-type=flat\nspawn-protection=0\nview-distance=4\nserver-port=%s\n' "$((26000 + RANDOM % 3000))" > server.properties
 
 java -Xmx1G -jar server.jar nogui > "$work/server.log" 2>&1 &
 server=$!
+shell_pid=$server   # kill needs the shell's own PID, umc needs the OS one (they differ in Git Bash)
 # Git Bash on Windows hands out its own PIDs; the Windows PID is what umc needs.
 [ -r "/proc/$server/winpid" ] && server=$(cat "/proc/$server/winpid")
 for _ in $(seq 120); do grep -q "Done (" "$work/server.log" && break; sleep 1; done
@@ -58,6 +59,6 @@ sleep 4
 check "script ticks with the server" "server ticks: 40" "$umc" -p "$server" log 30
 check "server still responsive" "pong" "$umc" -p "$server" ping
 
-kill $server 2>/dev/null
+kill $shell_pid 2>/dev/null
 if [ $fails -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"

@@ -99,6 +99,24 @@ check "render needs its permission" "render blocked: the 'render' event needs th
 u script unload denied >/dev/null
 check "grants narrow the permissions" "[]" bash -c "'$umc' -p $pid script load '$root/test/scripts/perms_denied.js' none >/dev/null; '$umc' -p $pid script list; '$umc' -p $pid script unload denied >/dev/null"
 
+echo "storage"
+check "load storage script" "loaded" u script load "$root/test/scripts/storage.js"
+log=$(u log 40)
+check "write and read back" "read -> \"hello world\"" echo "$log"
+check "missing file reads as null" "read missing -> null" echo "$log"
+check "list shows the file" "list -> [\"notes.txt\"]" echo "$log"
+check "parent directories are refused" "parent dir -> blocked: invalid file name" echo "$log"
+check "subfolders are refused" "subfolder -> blocked: invalid file name" echo "$log"
+check "absolute paths are refused" "absolute -> blocked: invalid file name" echo "$log"
+check "hidden files are refused" "hidden -> blocked: invalid file name" echo "$log"
+check "dot-dot names are refused" "dotdot name -> blocked: invalid file name" echo "$log"
+check "oversized files are refused" "too big -> blocked: file would be larger than 1024 KB" echo "$log"
+check "remove works" "gone -> false" echo "$log"
+check "nothing escaped the sandbox" "none" bash -c "[ -e '$work/config/umc/secret' ] || [ -e '$work/config/umc/data/a' ] && echo found || echo none"
+check "data lives in the script's own folder" "storage-check" ls "$work/config/umc/data"
+check "storage is absent without the permission" "fs without permission: undefined" bash -c "'$umc' -p $pid script load '$root/test/scripts/storage_denied.js' >/dev/null; '$umc' -p $pid log 5"
+u script unload storage-check >/dev/null; u script unload storage-denied >/dev/null
+
 echo "install"
 check "install shows permissions" "read your position" "$umc" -p $pid install "$root/test/scripts/installable.js" --yes
 check "installed script is loaded" "coords-hud" u script list

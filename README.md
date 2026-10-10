@@ -140,12 +140,17 @@ Installed scripts load every time you attach. `umc scripts` lists them and `umc 
 | `players` | `game.players()`: the same for every player around you |
 | `chat` | `game.chat(text)`: a message in your own chat window |
 | `render` | `umc.on("render", fn)`, `ui.rect(x, y, w, h, argb)`, `ui.text(text, x, y, argb)`, `ui.width(text)`, `ui.screen()` |
+| `storage` | `fs.read(name)`, `fs.write(name, text)`, `fs.append(name, text)`, `fs.exists(name)`, `fs.remove(name)`, `fs.list()` |
+
+**Storage is a private folder, not your disk.** A script with `storage` gets one folder of its own (`umc/data/<script id>/` in UMC's config directory) and nothing else on the computer is reachable. File names are plain (`settings.json`: letters, digits, `.`, `_`, `-`), so there are no paths, no `..` and no hidden files. A script can keep at most 100 files, 1 MB each and 10 MB in total, and writes are atomic, so a crash can't leave half a file behind.
 
 Scripts you load yourself with `umc script load <file>` are treated as local development code: they get what their header declares, or everything if they have no header. Examples are in [`examples/scripts`](examples/scripts).
 
-## Writing a module
+## Writing a native module
 
-A plugin is a shared library that registers one or more modules. Names are always Mojang's readable names; UMC maps them to whatever the running game uses.
+Scripts are the way to share plugins with other people: they're sandboxed and a user can read them. Native modules are for your own tools and for work that needs full access to the JVM. They're ordinary shared libraries with no sandbox, so only load ones you built or trust.
+
+A native plugin is a shared library that registers one or more modules. Names are always Mojang's readable names; UMC maps them to whatever the running game uses.
 
 ```cpp
 #include <atomic>
@@ -186,25 +191,37 @@ umc mod tick_counter freeze
 
 Hooks added through `Module::hook` are removed when the module is disabled. Inside a hook, `umc::Call` gives you `self()`, `arg(i)` and its typed variants, `cancel()`, and `return_int/long/float/double/object()`. For anything else, `Api` resolves classes, methods and fields to plain JNI handles: `find_class`, `find_method`, `find_field`. The full API is in [`include/umc/umc.hpp`](include/umc/umc.hpp), and a complete example is in [`examples/tick_counter`](examples/tick_counter/tick_counter.cpp).
 
-## Mappings
+## Version support
 
-Minecraft was obfuscated until 26.1. For those versions UMC needs Mojang's mappings, which `attach` downloads automatically the first time it sees a version, into `~/.cache/umc/mappings`. You can also fetch them ahead of time with `umc mappings fetch 1.21.4`, or import your own ProGuard-format file with `umc mappings import`.
+UMC resolves the same readable names on every version, so a script written once keeps working.
 
-Versions older than 1.14.4 have no official mappings. Those work if you supply a ProGuard-format mapping file yourself.
+| Versions | Where the names come from |
+| --- | --- |
+| 26.1 and later | the game itself, which ships unobfuscated |
+| 1.14.4 to 1.21.x | Mojang's official mappings, downloaded automatically |
+| 1.7.10 to 1.12.2 | MCP names, built automatically from the MCP archives (this is the "old combat" range) |
+| 1.13 to 1.14.3 | not supported: no mappings were ever published for them |
 
-Mod loaders that remap the game at runtime need their own naming scheme. NeoForge and Forge 1.20.5+ run on Mojang names and work as-is. Fabric and Quilt use intermediary names, which aren't supported yet.
+`umc attach` fetches whatever the running version needs the first time, into `~/.cache/umc/mappings`. You can also run `umc mappings fetch 1.8.9` ahead of time, or `umc mappings import` to use your own mapping file.
+
+The script API stays small and the differences between versions are handled underneath it. [`src/agent/accessors.txt`](src/agent/accessors.txt) lists, for every piece of game data UMC reads, the names it has had over the years (`getX()`, `posX`, `getName()` returning a component or a string, three different ways to draw on the HUD). The agent tries them in order and uses whichever the running version has. `test/versions/check.py` verifies the whole table against the real mappings for 23 versions from 1.7.10 to 1.21.8, and runs in CI.
+
+This is a table of known names, not automatic discovery: when Mojang renames something new, one line gets added to the table.
+
+Mod loaders that remap the game at runtime need their own naming scheme. NeoForge and Forge 1.20.5+ run on Mojang names and work as-is. Fabric and Quilt use intermediary names, and Forge before 1.20.5 uses SRG names; neither is supported yet.
 
 ## Status
 
 | | Linux | Windows | macOS |
 | --- | --- | --- | --- |
 | Builds | ✓ | ✓ | ✓ |
-| End-to-end tests | ✓ | not yet | not yet |
-| Live Minecraft | not yet | not yet | not yet |
+| Injects into a real vanilla server | ✓ | ✓ | ✓ |
+| Fake-game end-to-end suite | ✓ | not run | not run |
+| Live game client | ✓ (26.3) | not yet | not yet |
 
-UMC is early. The test suite (`test/run.sh`) injects into a small fake obfuscated game and covers injection, mappings, inspection, hooks, return overrides, cancellation, tracing and plugin reloads, and the bytecode rewriter is verified against the real 1.21.4 client. It has not yet been run against a live game, and Windows and macOS support is implemented but hasn't been run on those systems.
+UMC is early. Every push downloads real Minecraft servers (1.21.4 with mappings, 26.3 without) on all three systems, injects, and checks version and side detection, mappings, hooks, traces and scripts. A larger suite (`test/run.sh`) runs against a small fake game on Linux, including a fake 1.8-style game that uses MCP names. The client HUD, position reading and chat have been checked on a live 26.3 client on Linux; the client on Windows and macOS, and any real pre-1.14 game, have not been tried yet.
 
-Planned next: a background daemon that watches for game launches and injects automatically, and an interactive shell with history, completion and live events.
+Planned next: a background daemon that watches for game launches and injects automatically, an interactive shell with history, completion and live events, and a proper catalog for sharing script plugins.
 
 ## Layout
 

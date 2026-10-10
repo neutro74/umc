@@ -32,6 +32,7 @@ inline const std::vector<std::pair<std::string, std::string>>& known_permissions
         {"players", "read the position and name of other players near you"},
         {"chat", "show messages in your chat window"},
         {"render", "draw on your screen (the HUD)"},
+        {"storage", "keep small private files in its own folder (it can't see anything else on your computer)"},
     };
     return list;
 }

@@ -1,11 +1,13 @@
 #include "agent/scripts.hpp"
 
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
 #include "agent/core.hpp"
 #include "agent/game.hpp"
+#include "common/platform.hpp"
 #include "common/script_meta.hpp"
 #include "agent/util.hpp"
 #include "quickjs.h"
@@ -188,6 +190,131 @@ JSValue js_ui_screen(JSContext* ctx, JSValueConst, int, JSValueConst*) {
     return o;
 }
 
+// Per-script private storage: one flat folder per script, with size limits.
+constexpr size_t kMaxFileBytes = 1u << 20;
+constexpr size_t kMaxFiles = 100;
+constexpr size_t kMaxTotalBytes = 10u << 20;
+
+namespace fsys = std::filesystem;
+
+fsys::path storage_dir(const ScriptEngine::Script* script) {
+    return fsys::path(plat::config_dir()) / "data" / sanitize_id(script->name);
+}
+
+// Only plain names like "settings.json" are allowed, so a script can never leave its folder.
+bool valid_file_name(const std::string& name) {
+    if (name.empty() || name.size() > 64 || name[0] == '.') return false;
+    for (unsigned char c : name)
+        if (!std::isalnum(c) && c != '.' && c != '_' && c != '-') return false;
+    return name.find("..") == std::string::npos;
+}
+
+bool file_arg(JSContext* ctx, JSValueConst v, std::string& name, JSValue& error) {
+    const char* c = JS_ToCString(ctx, v);
+    if (!c) {
+        error = JS_EXCEPTION;
+        return false;
+    }
+    name = c;
+    JS_FreeCString(ctx, c);
+    if (!valid_file_name(name)) {
+        error = JS_ThrowTypeError(ctx, "invalid file name '%s' (use letters, digits, '.', '_' and '-')", name.c_str());
+        return false;
+    }
+    return true;
+}
+
+size_t folder_size(const fsys::path& dir, size_t& files) {
+    size_t total = 0;
+    files = 0;
+    std::error_code ec;
+    for (auto& e : fsys::directory_iterator(dir, ec))
+        if (e.is_regular_file(ec)) {
+            ++files;
+            total += size_t(e.file_size(ec));
+        }
+    return total;
+}
+
+JSValue js_fs_read(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    std::string name;
+    JSValue error;
+    if (argc < 1 || !file_arg(ctx, argv[0], name, error)) return argc < 1 ? JS_ThrowTypeError(ctx, "fs.read(name)") : error;
+    std::ifstream in(storage_dir(script_of(ctx)) / name, std::ios::binary);
+    if (!in) return JS_NULL;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    std::string body = ss.str();
+    return JS_NewStringLen(ctx, body.data(), body.size());
+}
+
+JSValue write_file(JSContext* ctx, int argc, JSValueConst* argv, bool append) {
+    std::string name;
+    JSValue error;
+    if (argc < 2) return JS_ThrowTypeError(ctx, append ? "fs.append(name, text)" : "fs.write(name, text)");
+    if (!file_arg(ctx, argv[0], name, error)) return error;
+    size_t length = 0;
+    const char* text = JS_ToCStringLen(ctx, &length, argv[1]);
+    if (!text) return JS_EXCEPTION;
+    std::string body(text, length);
+    JS_FreeCString(ctx, text);
+
+    fsys::path dir = storage_dir(script_of(ctx)), file = dir / name;
+    std::error_code ec;
+    fsys::create_directories(dir, ec);
+    size_t files = 0, total = folder_size(dir, files);
+    size_t existing = fsys::exists(file, ec) ? size_t(fsys::file_size(file, ec)) : 0;
+    size_t new_size = append ? existing + body.size() : body.size();
+    if (new_size > kMaxFileBytes) return JS_ThrowRangeError(ctx, "file would be larger than %zu KB", kMaxFileBytes >> 10);
+    if (!existing && files >= kMaxFiles) return JS_ThrowRangeError(ctx, "storage is limited to %zu files", kMaxFiles);
+    if (total - existing + new_size > kMaxTotalBytes) return JS_ThrowRangeError(ctx, "storage is limited to %zu MB", kMaxTotalBytes >> 20);
+
+    std::string content = body;
+    if (append && existing) {
+        std::ifstream in(file, std::ios::binary);
+        std::stringstream ss;
+        ss << in.rdbuf();
+        content = ss.str() + body;
+    }
+    fsys::path temp = dir / (name + ".tmp");  // write whole, then rename, so a crash can't leave half a file
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        out << content;
+        if (!out) return JS_ThrowInternalError(ctx, "could not write %s", name.c_str());
+    }
+    fsys::rename(temp, file, ec);
+    return ec ? JS_ThrowInternalError(ctx, "could not write %s", name.c_str()) : JS_TRUE;
+}
+
+JSValue js_fs_write(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) { return write_file(ctx, argc, argv, false); }
+JSValue js_fs_append(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) { return write_file(ctx, argc, argv, true); }
+
+JSValue js_fs_exists(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    std::string name;
+    JSValue error;
+    if (argc < 1 || !file_arg(ctx, argv[0], name, error)) return argc < 1 ? JS_ThrowTypeError(ctx, "fs.exists(name)") : error;
+    std::error_code ec;
+    return JS_NewBool(ctx, fsys::is_regular_file(storage_dir(script_of(ctx)) / name, ec));
+}
+
+JSValue js_fs_remove(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    std::string name;
+    JSValue error;
+    if (argc < 1 || !file_arg(ctx, argv[0], name, error)) return argc < 1 ? JS_ThrowTypeError(ctx, "fs.remove(name)") : error;
+    std::error_code ec;
+    return JS_NewBool(ctx, fsys::remove(storage_dir(script_of(ctx)) / name, ec));
+}
+
+JSValue js_fs_list(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+    JSValue array = JS_NewArray(ctx);
+    std::error_code ec;
+    uint32_t i = 0;
+    for (auto& e : fsys::directory_iterator(storage_dir(script_of(ctx)), ec))
+        if (e.is_regular_file(ec) && valid_file_name(e.path().filename().string()) && e.path().extension() != ".tmp")
+            JS_SetPropertyUint32(ctx, array, i++, JS_NewString(ctx, e.path().filename().string().c_str()));
+    return array;
+}
+
 JSValue js_game_chat(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (argc < 1) return JS_ThrowTypeError(ctx, "game.chat(text)");
     const char* text = JS_ToCString(ctx, argv[0]);
@@ -315,6 +442,17 @@ bool ScriptEngine::load(const std::string& path, std::string& error, const std::
     if (allowed.count("chat")) JS_SetPropertyStr(ctx, game, "chat", JS_NewCFunction(ctx, js_game_chat, "chat", 1));
     JS_SetPropertyStr(ctx, global, "game", game);
 
+    if (allowed.count("storage")) {
+        JSValue fs = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, fs, "read", JS_NewCFunction(ctx, js_fs_read, "read", 1));
+        JS_SetPropertyStr(ctx, fs, "write", JS_NewCFunction(ctx, js_fs_write, "write", 2));
+        JS_SetPropertyStr(ctx, fs, "append", JS_NewCFunction(ctx, js_fs_append, "append", 2));
+        JS_SetPropertyStr(ctx, fs, "exists", JS_NewCFunction(ctx, js_fs_exists, "exists", 1));
+        JS_SetPropertyStr(ctx, fs, "remove", JS_NewCFunction(ctx, js_fs_remove, "remove", 1));
+        JS_SetPropertyStr(ctx, fs, "list", JS_NewCFunction(ctx, js_fs_list, "list", 0));
+        JS_SetPropertyStr(ctx, global, "fs", fs);
+    }
+
     if (allowed.count("render")) {
         JSValue ui = JS_NewObject(ctx);
         JS_SetPropertyStr(ctx, ui, "rect", JS_NewCFunction(ctx, js_ui_rect, "rect", 5));
@@ -344,8 +482,6 @@ bool ScriptEngine::load(const std::string& path, std::string& error, const std::
     scripts_[name] = std::move(script);
     return true;
 }
-
-bool ScriptEngine::has_permission(const void*, const std::string&) { return true; }
 
 bool ScriptEngine::unload(const std::string& name, std::string& error) {
     std::lock_guard<std::recursive_mutex> lock(mu_);
