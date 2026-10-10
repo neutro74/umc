@@ -2,8 +2,14 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
+
+#if defined(_WIN32)
+#define popen _popen
+#define pclose _pclose
+#endif
 
 namespace umc::plat {
 
