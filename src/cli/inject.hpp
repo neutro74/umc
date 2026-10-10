@@ -22,6 +22,9 @@ bool inject(const GameProcess& p, const InjectOptions& opts, std::vector<std::st
 // Mappings (mappings_fetch.cpp). Returns false on network errors; `available` reports whether
 // the version ships obfuscation mappings at all.
 bool fetch_mappings(std::string version, bool& available, std::string& message);
+// Versions before 1.14.4 have no Mojang mappings; these build them from MCP data instead.
+bool is_legacy_version(const std::string& version);
+bool build_legacy_mappings(const std::string& version, std::string& message);
 int mappings_command(const std::vector<std::string>& args);
 
 }  // namespace umc::cli

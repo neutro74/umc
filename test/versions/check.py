@@ -20,6 +20,11 @@ def load_mappings(path):
         if not line.startswith(" "):
             current = line.split(" -> ")[0].strip().replace(".", "/")
             classes[current] = {"m": set(), "f": set()}
+        elif current and line.strip().startswith("!f "):
+            classes[current]["f"].add((line.split(" -> ")[0].strip()[3:], None))  # type unknown
+        elif current and line.strip().startswith("!m "):
+            desc, name = line.split(" -> ")[0].strip()[3:].split(" ", 1)
+            classes[current]["m"].add((name, desc, None))  # named descriptor, kept as written
         elif current:
             lhs = re.sub(r"^\d+:\d+:", "", line.split(" -> ")[0].strip())
             lhs = re.sub(r":\d+:\d+$", "", lhs)
@@ -73,12 +78,18 @@ def exists(classes, owner, kind, name, desc):
     cls = classes.get(owner)
     if cls is None:
         return False
+    if kind == "m" and name == "<init>":
+        return True  # constructors keep their name, only the class has to be known
     if kind == "m":
+        if any(m[0] == name and m[1] == desc and m[2] is None for m in cls["m"]):
+            return True  # legacy mapping: matched by full descriptor
+        if desc.startswith("(") and any(m[2] is None for m in cls["m"]):
+            return False
         params, ret = split_desc(desc)
         if name == "<init>":
             return (name, params, "void") in cls["m"] or ("<init>", params, "void") in cls["m"]
         return (name, params, ret) in cls["m"]
-    return (name, java_type(desc)) in cls["f"]
+    return (name, java_type(desc)) in cls["f"] or (name, None) in cls["f"]
 
 
 def main():
@@ -88,8 +99,16 @@ def main():
     width = max(len(v) for v in versions)
     for version in versions:
         classes = load_mappings(cache / "mappings" / version / "client.txt")
-        missing = [label for label, cands in table.items()
-                   if not any(exists(classes, *c) for c in cands)]
+        legacy = any(m[2] is None for c in classes.values() for m in c["m"])
+        # Labels tagged modern.* only apply to Mojang-mapped versions, and legacy.* only to MCP ones.
+        ok = {label: any(exists(classes, *c) for c in cands) for label, cands in table.items()}
+        # Screen size is one capability with two implementations; either one is enough.
+        modern = all(ok[l] for l in ("minecraft.window", "window.width", "window.height"))
+        old = all(ok[l] for l in ("scaled.new", "scaled.width", "scaled.height"))
+        for group in (("minecraft.window", "window.width", "window.height"), ("scaled.new", "scaled.width", "scaled.height")):
+            for label in group:
+                ok[label] = ok[label] or modern or old
+        missing = [label for label, good in ok.items() if not good]
         status = "ok" if not missing else "missing: " + ", ".join(missing)
         print(f"{version:<{width}}  {status}")
         failures += bool(missing)

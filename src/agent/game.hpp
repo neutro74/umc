@@ -36,6 +36,9 @@ public:
     // version draws with. `token` may stay null on 1.14-1.15, where nothing is passed.
     bool frame_token(JNIEnv* env, jobject first_arg, jobject& token);
 
+    // Picks the first hook point in the table under `label` that exists on this version.
+    bool hook_target(JNIEnv* env, const std::string& label, std::string& owner, std::string& name, std::string& desc);
+
     // One line per accessor: whether it resolved on this version.
     std::string report(JNIEnv* env);
 

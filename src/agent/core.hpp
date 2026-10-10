@@ -45,6 +45,9 @@ public:
     std::vector<std::string> log_since(uint64_t& seq, int timeout_ms);
 
     // True when the mappings know this class. Always false without mappings.
+    bool mapped_method(const std::string& owner, const std::string& name, const std::string& desc) const {
+        return !mappings_.methods(internal_name(owner), name, desc).empty();
+    }
     bool mapped_class(const std::string& named) const { return mappings_.by_named(internal_name(named)) != nullptr; }
 
     jvmtiEnv* jvmti() const { return jvmti_; }

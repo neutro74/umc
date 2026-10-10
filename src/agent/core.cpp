@@ -280,6 +280,32 @@ void Core::detect_game(JNIEnv* env) {
     }
     for (size_t i = 0; i + 1 < args.size(); ++i)
         if (args[i] == "--version") version_ = args[i + 1];
+    if (version_ != "unknown") return;
+
+    // Old jars carry no version.json. Launchers keep the version in the jar's path instead:
+    // .../versions/<v>/<v>.jar  or  .../com/mojang/minecraft/<v>/minecraft-<v>-client.jar
+    std::string cp;
+    jclass system = env->FindClass("java/lang/System");
+    jmethodID get_property = env->GetStaticMethodID(system, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;");
+    if (jstring key = env->NewStringUTF("java.class.path")) {
+        if (auto value = static_cast<jstring>(env->CallStaticObjectMethod(system, get_property, key))) {
+            const char* chars = env->GetStringUTFChars(value, nullptr);
+            cp = chars;
+            env->ReleaseStringUTFChars(value, chars);
+        }
+    }
+    env->ExceptionClear();
+    auto segment_after = [&](const std::string& marker) -> std::string {
+        size_t at = cp.find(marker);
+        if (at == std::string::npos) return "";
+        at += marker.size();
+        size_t end = cp.find_first_of("/\\:;", at);
+        return cp.substr(at, end == std::string::npos ? std::string::npos : end - at);
+    };
+    std::string found = segment_after("/versions/");
+    if (found.empty()) found = segment_after("/com/mojang/minecraft/");
+    if (found.empty()) found = segment_after("\\versions\\");
+    if (!found.empty() && std::isdigit(static_cast<unsigned char>(found[0]))) version_ = found;
 }
 
 bool Core::load_mappings(const std::string& path, std::string& error) {
@@ -416,7 +442,9 @@ jmethodID Core::find_method_in(JNIEnv* env, const std::string& owner, const std:
     while (cls) {
         std::string named = mappings_.to_named(signature_name(cls));
         std::vector<std::pair<std::string, std::string>> wanted;
-        if (mappings_.by_named(named)) {
+        if (name == "<init>") {
+            wanted.push_back({"<init>", mappings_.remap_desc(desc)});  // constructors keep their name
+        } else if (mappings_.by_named(named)) {
             for (auto* m : mappings_.methods(named, name, desc)) wanted.push_back({m->obf_name, m->obf_desc});
         } else {
             wanted.push_back({name, mappings_.remap_desc(desc)});

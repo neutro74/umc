@@ -21,6 +21,16 @@ FetchContent_Declare(quickjs
 set(QJS_BUILD_LIBC OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(quickjs)
 
+# miniz reads the MCP zip archives used to build mappings for pre-1.14 versions.
+FetchContent_Declare(miniz
+  GIT_REPOSITORY https://github.com/richgel999/miniz.git
+  GIT_TAG 3.0.2
+  GIT_SHALLOW TRUE)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # miniz declares an older minimum than CMake 4 accepts
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(INSTALL_PROJECT OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(miniz)
+
 # The bridge class is defined into the target JVM at runtime, so it is compiled
 # for Java 8 to stay loadable by old Minecraft versions.
 set(BRIDGE_SRC ${CMAKE_SOURCE_DIR}/src/java/umc/Bridge.java)
@@ -72,9 +82,10 @@ add_executable(umc
   src/cli/hotspot_attach.cpp
   src/cli/mappings_fetch.cpp
   src/cli/scripts.cpp
+  src/cli/legacy_mappings.cpp
   src/common/platform.cpp)
 target_include_directories(umc PRIVATE src)
-target_link_libraries(umc PRIVATE Threads::Threads)
+target_link_libraries(umc PRIVATE miniz Threads::Threads)
 if(MSVC)
   target_compile_options(umc PRIVATE /W4)
 else()

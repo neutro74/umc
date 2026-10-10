@@ -132,10 +132,13 @@ EntityInfo GameApi::read(JNIEnv* env, jobject entity) {
     info.id = integer(env, need(env, "entity.id"), entity);
     info.health = flt(env, need(env, "living.health"), entity);
     if (const Member& name = need(env, "entity.name"); name.m) {
-        jobject component = env->CallObjectMethod(entity, name.m);
-        if (!cleared(env) && component) {
-            info.name = component_text(env, component);
-            env->DeleteLocalRef(component);
+        jobject value = env->CallObjectMethod(entity, name.m);
+        if (!cleared(env) && value) {
+            info.name = name.desc.find("Ljava/lang/String;") != std::string::npos && name.returns('L') &&
+                                name.desc.substr(name.desc.rfind(')') + 1) == "Ljava/lang/String;"
+                            ? to_string(env, value)
+                            : component_text(env, value);
+            env->DeleteLocalRef(value);
         }
     }
     if (const Member& uuid = need(env, "entity.uuid"); uuid.m) {
@@ -171,12 +174,12 @@ std::vector<EntityInfo> GameApi::players(JNIEnv* env) {
     std::vector<EntityInfo> out;
     const Member& level_field = need(env, "minecraft.level");
     const Member& players = need(env, "level.players");
-    jobject mc = level_field.f && players.m ? minecraft(env) : nullptr;
+    jobject mc = level_field.f && players ? minecraft(env) : nullptr;
     if (!mc) return out;
     jobject level = env->GetObjectField(mc, level_field.f);
     env->DeleteLocalRef(mc);
     if (cleared(env) || !level) return out;
-    jobject list = env->CallObjectMethod(level, players.m);
+    jobject list = players.m ? env->CallObjectMethod(level, players.m) : env->GetObjectField(level, players.f);
     env->DeleteLocalRef(level);
     if (cleared(env) || !list) return out;
 
@@ -288,8 +291,13 @@ bool GameApi::draw_text(JNIEnv* env, jobject token, const std::string& text, int
         int n = 0;
         if (mode == Draw::PoseStack) args[n++].l = token;
         args[n++].l = js;
-        args[n++].f = jfloat(x);
-        args[n++].f = jfloat(y);
+        if (draw.desc.find("III") != std::string::npos) {  // 1.7 takes integer coordinates
+            args[n++].i = x;
+            args[n++].i = y;
+        } else {
+            args[n++].f = jfloat(x);
+            args[n++].f = jfloat(y);
+        }
         args[n++].i = jint(argb);
         env->CallIntMethodA(font, draw.m, args);
     }
@@ -312,19 +320,55 @@ int GameApi::text_width(JNIEnv* env, const std::string& text) {
 }
 
 bool GameApi::screen_size(JNIEnv* env, jobject, int& w, int& h) {
+    jobject mc = minecraft(env);
+    if (!mc) return false;
+    bool ok = false;
     const Member& window = need(env, "minecraft.window");
     const Member& gw = need(env, "window.width");
     const Member& gh = need(env, "window.height");
-    if (!window || !gw.m || !gh.m) return false;
-    jobject mc = minecraft(env);
-    if (!mc) return false;
-    jobject win = window.m ? env->CallObjectMethod(mc, window.m) : env->GetObjectField(mc, window.f);
+    if (window && gw.m && gh.m) {
+        jobject win = window.m ? env->CallObjectMethod(mc, window.m) : env->GetObjectField(mc, window.f);
+        if (!cleared(env) && win) {
+            w = env->CallIntMethod(win, gw.m);
+            h = env->CallIntMethod(win, gh.m);
+            env->DeleteLocalRef(win);
+            ok = !cleared(env);
+        }
+    } else {
+        const Member& make = need(env, "scaled.new");
+        const Member& sw = need(env, "scaled.width");
+        const Member& sh = need(env, "scaled.height");
+        if (make.m && make.owner && sw.m && sh.m && make.desc == "(Lnet/minecraft/client/Minecraft;)V") {
+            jobject scaled = env->NewObject(make.owner, make.m, mc);
+            if (!cleared(env) && scaled) {
+                w = env->CallIntMethod(scaled, sw.m);
+                h = env->CallIntMethod(scaled, sh.m);
+                env->DeleteLocalRef(scaled);
+                ok = !cleared(env);
+            }
+        }
+    }
     env->DeleteLocalRef(mc);
-    if (cleared(env) || !win) return false;
-    w = env->CallIntMethod(win, gw.m);
-    h = env->CallIntMethod(win, gh.m);
-    env->DeleteLocalRef(win);
-    return !cleared(env);
+    return ok;
+}
+
+bool GameApi::hook_target(JNIEnv* env, const std::string& label, std::string& owner, std::string& name, std::string& desc) {
+    Core& core = Core::get();
+    const auto it = table_.find(label);
+    if (it == table_.end()) return false;
+    for (const Candidate& c : it->second) {
+        bool exists = core.remapped() ? core.mapped_method(c.owner, c.name, c.desc)
+                                      : core.find_method(env, c.owner, c.name, c.desc) != nullptr;
+        if (exists) {
+            owner = c.owner, name = c.name, desc = c.desc;
+            return true;
+        }
+    }
+    if (core.remapped() || it->second.empty()) return false;
+    // Unobfuscated and the class isn't loaded yet: assume the newest layout.
+    const Candidate& first = it->second.front();
+    owner = first.owner, name = first.name, desc = first.desc;
+    return true;
 }
 
 }  // namespace umc

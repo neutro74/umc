@@ -100,16 +100,31 @@ u script unload denied >/dev/null
 check "grants narrow the permissions" "[]" bash -c "'$umc' -p $pid script load '$root/test/scripts/perms_denied.js' none >/dev/null; '$umc' -p $pid script list; '$umc' -p $pid script unload denied >/dev/null"
 
 echo "install"
-check "install shows permissions" "read your position" "$umc" -p $pid install "$root/examples/scripts/hud.js" --yes
+check "install shows permissions" "read your position" "$umc" -p $pid install "$root/test/scripts/installable.js" --yes
 check "installed script is loaded" "coords-hud" u script list
 check "installed script gets its approved permissions" "[player render]" u script list
-check "scripts lists installs" "Coords HUD" "$umc" scripts
+check "scripts lists installs" "Installable Test" "$umc" scripts
 check "install rejects a headerless script" "no // ==UMC== header" "$umc" install "$root/test/scripts/counter.js" --yes
 printf '// ==UMC==\n// @name Bad\n// @id bad\n// @permissions root\n// ==/UMC==\n' > "$work/bad.js"
 check "install rejects unknown permissions" "unknown permission 'root'" "$umc" install "$work/bad.js" --yes
 check "uninstall" "uninstalled coords-hud" "$umc" -p $pid uninstall coords-hud
 check "uninstall unloads" "gone" bash -c "'$umc' -p $pid script list | grep -q coords-hud && echo present || echo gone"
 
+kill $pid
+
+echo "legacy (MCP names, 1.8 style)"
+javac --release 8 -d "$work/game18" $(find "$root/test/fakemc18/src" -name '*.java')
+"$umc" mappings import 1.8.9 client "$root/test/fakemc18/client.txt" >/dev/null
+java -cp "$work/game18" net.minecraft.client.main.Main --accessToken test --version 1.8.9 >"$work/game18.out" 2>&1 &
+pid=$!
+sleep 0.5
+check "attach to a 1.8.9 game" "minecraft 1.8.9 client" "$umc" attach $pid
+check "tick hook found under its old name" "script event" bash -c "! '$umc' -p $pid script load '$root/test/scripts/legacy.js' 2>&1 | grep -q 'could not'; echo 'script event ok'"
+sleep 1
+check "player read through MCP names" "legacy player: OldCombatter 12.5 70 -4.25 90 -10 19.5 true 42" u log 20
+check "other players resolve" "legacy players: 1" u log 20
+check "chat reaches the game" "chat: hello from umc" cat "$work/game18.out"
+check "game accessors all resolve" "ok       minecraft.player" u game
 kill $pid
 if [ $fails -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"

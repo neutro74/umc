@@ -52,6 +52,10 @@ void write_file(const std::string& path, const std::string& body) {
 
 bool fetch_mappings(std::string version, bool& available, std::string& message) {
     available = false;
+    if (is_legacy_version(version)) {
+        available = build_legacy_mappings(version, message);
+        return available;
+    }
     std::string manifest;
     if (!http_get(kManifest, manifest)) {
         message = "could not download the version manifest (is curl installed and are you online?)";

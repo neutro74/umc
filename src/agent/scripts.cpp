@@ -220,11 +220,15 @@ bool ScriptEngine::ensure_event_hook(const std::string& event) {
     if (event_hooks_.count(event)) return true;
     Core& core = Core::get();
     int id = -1;
+    JNIEnv* env = current_env();
+    std::string owner, method, desc;
     if (event == "tick") {
         auto fire = [](Call&) { ScriptEngine::get().emit("tick"); };
-        id = core.side() == Side::Server
-                 ? core.hook("net.minecraft.server.MinecraftServer", "tickServer", "", fire)
-                 : core.hook("net.minecraft.client.Minecraft", "tick", "()V", fire);
+        if (core.side() == Side::Server) {
+            id = core.hook("net.minecraft.server.MinecraftServer", "tickServer", "", fire);
+        } else if (env && GameApi::get().hook_target(env, "hook.tick", owner, method, desc)) {
+            id = core.hook(owner, method, desc, fire);
+        }
         if (id < 0) core.log("script event 'tick' could not be hooked");
     } else if (event == "render") {
         // The HUD draw method: Hud.extractRenderState on 26.x, Gui.render before that.
@@ -237,15 +241,9 @@ bool ScriptEngine::ensure_event_hook(const std::string& event) {
             g_in_frame = false;
             g_graphics = nullptr;
         };
-        // Hud exists from 26.x; before that Gui.render draws the HUD. The class may not have loaded yet.
-        JNIEnv* env = current_env();
-        const char* hud = "net.minecraft.client.gui.Hud";
-        // Old versions have Gui.render; 26.x moved the drawing into Hud. If Gui isn't loaded yet, assume modern.
-        bool legacy = core.remapped() ? !core.mapped_class(hud) && core.mapped_class("net.minecraft.client.gui.Gui")
-                                      : env && core.find_method(env, "net.minecraft.client.gui.Gui", "render", "");
-        bool modern = !legacy;
-        id = modern ? core.hook(hud, "extractRenderState", "", draw)
-                    : core.hook("net.minecraft.client.gui.Gui", "render", "", draw);
+        // Name only: the HUD method's parameters differ between versions, and the name is unique in its class.
+        if (env && GameApi::get().hook_target(env, "hook.render", owner, method, desc))
+            id = core.hook(owner, method, "", draw);
         if (id < 0) core.log("script event 'render' could not be hooked");
     } else {
         return false;

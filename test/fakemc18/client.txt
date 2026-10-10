@@ -1,0 +1,26 @@
+# Generated-style mapping (MCP names), the format `umc mappings fetch` writes for pre-1.14 versions.
+net.minecraft.client.Minecraft -> ave:
+    !f thePlayer -> h
+    !f theWorld -> f
+    !m ()Lnet/minecraft/client/Minecraft; getMinecraft -> a
+    !m ()V runTick -> s
+net.minecraft.entity.Entity -> pk:
+    !f posX -> s
+    !f posY -> t
+    !f posZ -> u
+    !f rotationYaw -> y
+    !f rotationPitch -> z
+    !f onGround -> C
+    !m ()I getEntityId -> F
+    !m ()Ljava/lang/String; getName -> e_
+    !m ()Ljava/util/UUID; getUniqueID -> aK
+net.minecraft.entity.EntityLivingBase -> pr:
+    !m ()F getHealth -> bn
+net.minecraft.util.IChatComponent -> eu:
+    !m ()Ljava/lang/String; getUnformattedText -> c
+net.minecraft.util.ChatComponentText -> fa:
+net.minecraft.client.entity.EntityPlayerSP -> bln:
+    !m (Lnet/minecraft/util/IChatComponent;)V addChatMessage -> b
+net.minecraft.client.multiplayer.WorldClient -> bdb:
+net.minecraft.world.World -> adm:
+    !f playerEntities -> k

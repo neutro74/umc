@@ -4,51 +4,83 @@
 # Members are looked up on the owner class and its superclasses.
 
 minecraft.getInstance  net.minecraft.client.Minecraft  m:getInstance:()Lnet/minecraft/client/Minecraft;
+minecraft.getInstance  net.minecraft.client.Minecraft  m:getMinecraft:()Lnet/minecraft/client/Minecraft;
 minecraft.player       net.minecraft.client.Minecraft  f:player:Lnet/minecraft/client/player/LocalPlayer;
+minecraft.player       net.minecraft.client.Minecraft  f:thePlayer:Lnet/minecraft/client/entity/EntityPlayerSP;  f:player:Lnet/minecraft/client/entity/EntityPlayerSP;
 minecraft.level        net.minecraft.client.Minecraft  f:level:Lnet/minecraft/client/multiplayer/ClientLevel;
 minecraft.level        net.minecraft.client.Minecraft  f:level:Lnet/minecraft/client/multiplayer/MultiPlayerLevel;
+minecraft.level        net.minecraft.client.Minecraft  f:theWorld:Lnet/minecraft/client/multiplayer/WorldClient;  f:world:Lnet/minecraft/client/multiplayer/WorldClient;
 minecraft.font         net.minecraft.client.Minecraft  f:font:Lnet/minecraft/client/gui/Font;
+minecraft.font         net.minecraft.client.Minecraft  f:fontRendererObj:Lnet/minecraft/client/gui/FontRenderer;  f:fontRenderer:Lnet/minecraft/client/gui/FontRenderer;
 level.players          net.minecraft.client.multiplayer.ClientLevel  m:players:()Ljava/util/List;
 level.players          net.minecraft.client.multiplayer.MultiPlayerLevel  m:players:()Ljava/util/List;
+level.players          net.minecraft.world.World  f:playerEntities:Ljava/util/List;
 
 entity.x         net.minecraft.world.entity.Entity  m:getX:()D  f:x:D
+entity.x         net.minecraft.entity.Entity  f:posX:D
 entity.y         net.minecraft.world.entity.Entity  m:getY:()D  f:y:D
+entity.y         net.minecraft.entity.Entity  f:posY:D
 entity.z         net.minecraft.world.entity.Entity  m:getZ:()D  f:z:D
+entity.z         net.minecraft.entity.Entity  f:posZ:D
 entity.yaw       net.minecraft.world.entity.Entity  m:getYRot:()F  f:yRot:F
+entity.yaw       net.minecraft.entity.Entity  f:rotationYaw:F
 entity.pitch     net.minecraft.world.entity.Entity  m:getXRot:()F  f:xRot:F
+entity.pitch     net.minecraft.entity.Entity  f:rotationPitch:F
 entity.onGround  net.minecraft.world.entity.Entity  m:onGround:()Z  f:onGround:Z
+entity.onGround  net.minecraft.entity.Entity  f:onGround:Z
 entity.id        net.minecraft.world.entity.Entity  m:getId:()I
+entity.id        net.minecraft.entity.Entity  m:getEntityId:()I
 entity.name      net.minecraft.world.entity.Entity  m:getName:()Lnet/minecraft/network/chat/Component;
+entity.name      net.minecraft.entity.Entity  m:getName:()Ljava/lang/String;  m:getCommandSenderName:()Ljava/lang/String;
 entity.uuid      net.minecraft.world.entity.Entity  m:getUUID:()Ljava/util/UUID;
+entity.uuid      net.minecraft.entity.Entity  m:getUniqueID:()Ljava/util/UUID;
 living.health    net.minecraft.world.entity.LivingEntity  m:getHealth:()F
+living.health    net.minecraft.entity.EntityLivingBase  m:getHealth:()F
 
 component.string   net.minecraft.network.chat.Component  m:getString:()Ljava/lang/String;
+component.string   net.minecraft.util.IChatComponent  m:getUnformattedText:()Ljava/lang/String;
+component.string   net.minecraft.util.text.ITextComponent  m:getUnformattedText:()Ljava/lang/String;
 component.literal  net.minecraft.network.chat.Component  m:literal:(Ljava/lang/String;)Lnet/minecraft/network/chat/MutableComponent;
 component.literal  net.minecraft.network.chat.TextComponent  m:<init>:(Ljava/lang/String;)V
+component.literal  net.minecraft.util.ChatComponentText  m:<init>:(Ljava/lang/String;)V
+component.literal  net.minecraft.util.text.TextComponentString  m:<init>:(Ljava/lang/String;)V
 
 chat.send  net.minecraft.client.player.LocalPlayer  m:sendSystemMessage:(Lnet/minecraft/network/chat/Component;)V
 chat.send  net.minecraft.world.entity.player.Player  m:displayClientMessage:(Lnet/minecraft/network/chat/Component;Z)V
 chat.send  net.minecraft.client.player.LocalPlayer  m:sendMessage:(Lnet/minecraft/network/chat/Component;Ljava/util/UUID;)V
+chat.send  net.minecraft.client.entity.EntityPlayerSP  m:addChatMessage:(Lnet/minecraft/util/IChatComponent;)V
+chat.send  net.minecraft.client.entity.EntityPlayerSP  m:addChatMessage:(Lnet/minecraft/util/text/ITextComponent;)V
+chat.send  net.minecraft.entity.Entity  m:sendMessage:(Lnet/minecraft/util/text/ITextComponent;)V
 
 # HUD drawing comes in three eras: a graphics object (1.20+), a PoseStack (1.16-1.19), or nothing (1.14-1.15).
 gfx.fill   net.minecraft.client.gui.GuiGraphicsExtractor  m:fill:(IIIII)V
 gfx.fill   net.minecraft.client.gui.GuiGraphics          m:fill:(IIIII)V
 gfx.fill   net.minecraft.client.gui.GuiComponent         m:fill:(Lcom/mojang/blaze3d/vertex/PoseStack;IIIII)V
 gfx.fill   net.minecraft.client.gui.GuiComponent         m:fill:(IIIII)V
+gfx.fill   net.minecraft.client.gui.Gui                  m:drawRect:(IIIII)V
 gfx.text   net.minecraft.client.gui.GuiGraphicsExtractor  m:text:(Lnet/minecraft/client/gui/Font;Ljava/lang/String;IIIZ)V
 gfx.text   net.minecraft.client.gui.GuiGraphics          m:drawString:(Lnet/minecraft/client/gui/Font;Ljava/lang/String;IIIZ)I
 gfx.text   net.minecraft.client.gui.GuiGraphics          m:drawString:(Lnet/minecraft/client/gui/Font;Ljava/lang/String;IIIZ)V
 gfx.text   net.minecraft.client.gui.Font                 m:drawShadow:(Lcom/mojang/blaze3d/vertex/PoseStack;Ljava/lang/String;FFI)I
 gfx.text   net.minecraft.client.gui.Font                 m:drawShadow:(Ljava/lang/String;FFI)I
+gfx.text   net.minecraft.client.gui.FontRenderer         m:drawStringWithShadow:(Ljava/lang/String;FFI)I  m:drawStringWithShadow:(Ljava/lang/String;III)I
 font.width net.minecraft.client.gui.Font  m:width:(Ljava/lang/String;)I
+font.width net.minecraft.client.gui.FontRenderer  m:getStringWidth:(Ljava/lang/String;)I
 minecraft.window  net.minecraft.client.Minecraft  m:getWindow:()Lcom/mojang/blaze3d/platform/Window;  f:window:Lcom/mojang/blaze3d/platform/Window;
 window.width      com.mojang.blaze3d.platform.Window  m:getGuiScaledWidth:()I
 window.height     com.mojang.blaze3d.platform.Window  m:getGuiScaledHeight:()I
+# Before 1.13 the scaled size comes from a ScaledResolution built for the current frame.
+scaled.new        net.minecraft.client.gui.ScaledResolution  m:<init>:(Lnet/minecraft/client/Minecraft;)V
+scaled.width      net.minecraft.client.gui.ScaledResolution  m:getScaledWidth:()I
+scaled.height     net.minecraft.client.gui.ScaledResolution  m:getScaledHeight:()I
 
 # Methods the script events hook into (checked by test/versions/check.py).
 hook.tick    net.minecraft.client.Minecraft  m:tick:()V
+hook.tick    net.minecraft.client.Minecraft  m:runTick:()V
 hook.render  net.minecraft.client.gui.Hud  m:extractRenderState:(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V
 hook.render  net.minecraft.client.gui.Gui  m:render:(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/DeltaTracker;)V
 hook.render  net.minecraft.client.gui.Gui  m:render:(Lnet/minecraft/client/gui/GuiGraphics;F)V
 hook.render  net.minecraft.client.gui.Gui  m:render:(Lcom/mojang/blaze3d/vertex/PoseStack;F)V
 hook.render  net.minecraft.client.gui.Gui  m:render:(F)V
+hook.render  net.minecraft.client.gui.GuiIngame  m:renderGameOverlay:(F)V
+hook.render  net.minecraft.client.gui.GuiIngame  m:renderGameOverlay:(FZII)V

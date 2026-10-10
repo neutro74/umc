@@ -78,6 +78,20 @@ bool Mappings::load_proguard(const std::string& path, std::string& error) {
         }
         if (current.empty()) continue;
 
+        // Generated legacy mappings: "!f name -> obf" (type unknown) and "!m (named desc) name -> obf".
+        {
+            std::string t = trim(line.substr(0, arrow));
+            if (t.rfind("!f ", 0) == 0) {
+                pending.push_back({current, "?", trim(t.substr(3)), "", trim(line.substr(arrow + 4)), false});
+                continue;
+            }
+            if (t.rfind("!m ", 0) == 0) {
+                size_t sp = t.find(' ', 3);
+                if (sp != std::string::npos)
+                    pending.push_back({current, "!", trim(t.substr(sp + 1)), t.substr(3, sp - 3), trim(line.substr(arrow + 4)), true});
+                continue;
+            }
+        }
         std::string lhs = strip_lines(trim(line.substr(0, arrow)));
         std::string obf = trim(line.substr(arrow + 4));
         size_t space = lhs.find(' ');
@@ -96,7 +110,11 @@ bool Mappings::load_proguard(const std::string& path, std::string& error) {
         MemberMapping m;
         m.name = p.name;
         m.obf_name = p.obf;
-        if (p.method) {
+        if (p.method && p.type == "!") {
+            m.desc = p.args;  // already a JVM descriptor
+        } else if (!p.method && p.type == "?") {
+            m.desc = "";
+        } else if (p.method) {
             std::string desc = "(";
             size_t start = 0;
             while (start < p.args.size()) {
@@ -109,7 +127,7 @@ bool Mappings::load_proguard(const std::string& path, std::string& error) {
         } else {
             m.desc = type_desc(p.type);
         }
-        m.obf_desc = remap_desc(m.desc);
+        m.obf_desc = m.desc.empty() ? "" : remap_desc(m.desc);
         auto& cls = classes_[p.owner];
         (p.method ? cls.methods : cls.fields).push_back(std::move(m));
     }
