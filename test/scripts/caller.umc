@@ -1,0 +1,4 @@
+plugin "caller";
+depends "base" "1.0.0";
+command "call" { return plugins.call("base", "add", 3, 4); }
+command "undeclared" { return plugins.call("private", "read"); }

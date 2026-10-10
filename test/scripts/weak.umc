@@ -1,0 +1,3 @@
+plugin "weak";
+depends "private" "1.0.0";
+command "read" { return plugins.call("private", "read"); }

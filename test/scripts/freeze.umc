@@ -1,0 +1,6 @@
+plugin "freeze";
+permissions hooks;
+state frozen = false;
+hook "net.minecraft.client.Minecraft" "tick" "()V" { if frozen { cancel; } }
+command "on" { frozen = true; }
+command "off" { frozen = false; }

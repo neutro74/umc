@@ -11,7 +11,8 @@ endif()
 find_package(JNI REQUIRED COMPONENTS JVM)
 find_package(Threads REQUIRED)
 
-# QuickJS-ng runs script plugins. Built without its std/os modules.
+# QuickJS-ng executes compiler-generated code internally; no raw JS plugin entry point.
+# Built without its std/os modules.
 include(FetchContent)
 FetchContent_Declare(quickjs
   GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
@@ -55,14 +56,14 @@ set(UMC_CORE_SOURCES
   src/agent/commands.cpp
   src/agent/scripts.cpp
   src/agent/game.cpp
-  src/agent/java.cpp
   src/agent/classfile.cpp
   src/agent/mappings.cpp
   src/common/platform.cpp
+  src/common/language.cpp
   ${ACCESSORS_HEADER})
 add_library(umc_agent SHARED src/agent/agent.cpp src/agent/server.cpp ${UMC_CORE_SOURCES})
 set_target_properties(umc_agent PROPERTIES OUTPUT_NAME umc)
-target_include_directories(umc_agent PRIVATE include src ${CMAKE_BINARY_DIR}/generated ${JNI_INCLUDE_DIRS})
+target_include_directories(umc_agent PRIVATE src ${CMAKE_BINARY_DIR}/generated ${JNI_INCLUDE_DIRS})
 target_link_libraries(umc_agent PRIVATE qjs Threads::Threads ${CMAKE_DL_LIBS})
 if(MSVC)
   target_compile_options(umc_agent PRIVATE /W4)
@@ -84,7 +85,8 @@ add_executable(umc
   src/cli/mappings_fetch.cpp
   src/cli/scripts.cpp
   src/cli/legacy_mappings.cpp
-  src/common/platform.cpp)
+  src/common/platform.cpp
+  src/common/language.cpp)
 target_include_directories(umc PRIVATE src)
 target_link_libraries(umc PRIVATE miniz Threads::Threads)
 if(NOT WIN32)
@@ -101,16 +103,11 @@ if(WIN32)
   target_link_libraries(umc PRIVATE ws2_32)
 endif()
 
-add_library(tick_counter MODULE examples/tick_counter/tick_counter.cpp)
-set_target_properties(tick_counter PROPERTIES PREFIX "")
-target_include_directories(tick_counter PRIVATE include ${JNI_INCLUDE_DIRS})
-
 include(GNUInstallDirs)
 install(TARGETS umc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS umc_agent LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/umc)
-install(DIRECTORY include/umc DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # In-process JVM tests also run where the sandbox prohibits attach/control sockets.
-add_executable(umc_script_test EXCLUDE_FROM_ALL test/script_api.cpp ${UMC_CORE_SOURCES})
-target_include_directories(umc_script_test PRIVATE include src ${CMAKE_BINARY_DIR}/generated ${JNI_INCLUDE_DIRS})
+add_executable(umc_script_test EXCLUDE_FROM_ALL test/script_api.cpp src/cli/scripts.cpp ${UMC_CORE_SOURCES})
+target_include_directories(umc_script_test PRIVATE src ${CMAKE_BINARY_DIR}/generated ${JNI_INCLUDE_DIRS})
 target_link_libraries(umc_script_test PRIVATE qjs ${JNI_LIBRARIES} Threads::Threads ${CMAKE_DL_LIBS})

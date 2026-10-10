@@ -1,0 +1,8 @@
+plugin "coords";
+name "Coordinates";
+permissions player;
+command "position" {
+    let p = game.player();
+    if p == null { return "No world loaded"; }
+    return str(round(p.x, 1)) + " " + str(round(p.y, 1)) + " " + str(round(p.z, 1));
+}

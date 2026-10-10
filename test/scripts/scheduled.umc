@@ -1,0 +1,5 @@
+plugin "scheduled";
+state n = 0;
+init { after 2 { n = n + 1; } }
+command "count" { return n; }
+command "later" { after 1 { n = n + 10; } }

@@ -28,6 +28,7 @@ jobs:
           rm -rf build
           test/run.sh
           bash test/script_api.sh
+          python3 test/language_test.py
       - name: Version coverage
         if: runner.os == 'Linux'
         run: |

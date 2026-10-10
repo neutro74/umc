@@ -163,20 +163,6 @@ bool Core::start(JavaVM* vm, jvmtiEnv* jvmti, JNIEnv* env, const std::string& op
     started_ = true;
     log("injected: minecraft " + version_ + " " + side_name(side_) + " (" + loader_kind_ + ")");
 
-    if (options_.count("plugins")) {
-        std::stringstream ps(options_["plugins"]);
-        std::string path, err;
-        while (std::getline(ps, path, '|'))
-            if (!path.empty() && !load_plugin(path, err)) log(err);
-    }
-    if (options_.count("enable")) {
-        std::stringstream es(options_["enable"]);
-        std::string name, msg;
-        while (std::getline(es, name, '+')) {
-            if (auto* slot = module_slot(name)) set_enabled(env, *slot, true, msg);
-            else log("enable: no module named " + name);
-        }
-    }
     return true;
 }
 
@@ -327,67 +313,6 @@ bool Core::load_mappings(const std::string& path, std::string& error) {
     log("loaded " + std::to_string(mappings_.size()) + " class mappings from " + path);
     if (loader_kind_ == "fabric" || loader_kind_ == "quilt" || loader_kind_ == "forge")
         log("warning: " + loader_kind_ + " remaps the game at runtime, Mojang -> obfuscated mappings won't match");
-    return true;
-}
-
-bool Core::load_plugin(const std::string& path, std::string& error) {
-    void* handle = plat::lib_open(path, error);
-    if (!handle) {
-        error = "plugin: " + error;
-        return false;
-    }
-    auto reg = reinterpret_cast<void (*)(Api*)>(plat::lib_symbol(handle, "umc_register"));
-    if (!reg) {
-        error = "plugin " + path + " does not export umc_register";
-        plat::lib_close(handle);
-        return false;
-    }
-    size_t before = modules_.size();
-    reg(this);
-    plugins_.push_back({path, handle});
-    for (size_t i = before; i < modules_.size(); ++i) modules_[i].origin = path;
-    log("loaded plugin " + path + " (" + std::to_string(modules_.size() - before) + " modules)");
-    return true;
-}
-
-void Core::add_module(std::unique_ptr<Module> module) {
-    std::lock_guard<std::recursive_mutex> lock(mu_);
-    if (!module) return;
-    if (module_slot(module->name())) {
-        log("module " + module->name() + " already registered, skipping");
-        return;
-    }
-    modules_.push_back({std::move(module), false, "builtin"});
-}
-
-Core::ModuleSlot* Core::module_slot(const std::string& name) {
-    for (auto& m : modules_)
-        if (m.module->name() == name) return &m;
-    return nullptr;
-}
-
-bool Core::set_enabled(JNIEnv* env, ModuleSlot& slot, bool enabled, std::string& msg) {
-    const std::string name = slot.module->name();
-    if (slot.enabled == enabled) {
-        msg = name + " is already " + (enabled ? "enabled" : "disabled");
-        return true;
-    }
-    try {
-        if (enabled) {
-            slot.module->on_enable(*this, env);
-        } else {
-            slot.module->on_disable(*this, env);
-            for (int id : slot.module->owned_hooks()) unhook(id);
-            slot.module->owned_hooks().clear();
-        }
-    } catch (const std::exception& e) {
-        msg = name + ": " + e.what();
-        log(msg);
-        return false;
-    }
-    slot.enabled = enabled;
-    msg = name + (enabled ? " enabled" : " disabled");
-    log(msg);
     return true;
 }
 

@@ -108,9 +108,7 @@ std::string Core::cmd_status() {
       << "minecraft " << version_ << " (" << side_name(side_) << ", " << loader_kind_ << ")\n"
       << "mappings  " << (mappings_.empty() ? "none (names used as-is)" : std::to_string(mappings_.size()) + " classes, " + mappings_source_) << "\n"
       << "hooks     " << hooks_.size() << " (" << traces_.size() << " traces)\n";
-    size_t on = 0;
-    for (auto& m : modules_) on += m.enabled;
-    o << "modules   " << modules_.size() << " (" << on << " enabled), " << plugins_.size() << " plugins\n";
+    o << "plugins   " << ScriptEngine::get().list().size() << " sandboxed plugins\n";
     return o.str();
 }
 
@@ -230,7 +228,7 @@ std::pair<bool, std::string> Core::cmd_get_set(JNIEnv* env, const std::vector<st
     std::string sig = sig_c;
     jvmti_->Deallocate(reinterpret_cast<unsigned char*>(n));
     jvmti_->Deallocate(reinterpret_cast<unsigned char*>(sig_c));
-    if (!(mods & ACC_STATIC)) return {false, args[2] + " is an instance field; use a module to reach instances\n"};
+    if (!(mods & ACC_STATIC)) return {false, args[2] + " is an instance field; use a plugin to reach instances\n"};
 
     if (set) {
         jvalue v{};
@@ -275,7 +273,7 @@ std::pair<bool, std::string> Core::cmd_call(JNIEnv* env, const std::vector<std::
     std::string sig = sig_c;
     jvmti_->Deallocate(reinterpret_cast<unsigned char*>(n));
     jvmti_->Deallocate(reinterpret_cast<unsigned char*>(sig_c));
-    if (!(mods & ACC_STATIC)) return {false, args[2] + " is an instance method; use a module to reach instances\n"};
+    if (!(mods & ACC_STATIC)) return {false, args[2] + " is an instance method; use a plugin to reach instances\n"};
 
     std::vector<std::string> params;
     std::string ret;
@@ -389,30 +387,6 @@ std::string Core::cmd_mem(JNIEnv* env, bool gc) {
     return o.str() + "\n";
 }
 
-bool Core::unload_plugin(JNIEnv* env, const std::string& which, std::string& path, std::string& error) {
-    std::lock_guard<std::recursive_mutex> lock(mu_);
-    auto it = std::find_if(plugins_.begin(), plugins_.end(), [&](const Plugin& p) {
-        if (p.path == which || p.path.substr(p.path.rfind('/') + 1) == which) return true;
-        for (auto& m : modules_)
-            if (m.origin == p.path && m.module->name() == which) return true;
-        return false;
-    });
-    if (it == plugins_.end()) {
-        error = "no loaded plugin matches " + which;
-        return false;
-    }
-    path = it->path;
-    std::string msg;
-    for (auto& m : modules_)
-        if (m.origin == path && m.enabled) set_enabled(env, m, false, msg);
-    modules_.erase(std::remove_if(modules_.begin(), modules_.end(), [&](const ModuleSlot& m) { return m.origin == path; }),
-                   modules_.end());
-    plat::lib_close(it->handle);
-    plugins_.erase(it);
-    log("unloaded plugin " + path);
-    return true;
-}
-
 std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::string>& args) {
     if (args.empty() || args[0] == "help") {
         return {true,
@@ -420,17 +394,11 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
                 "  status                     version, side, mappings, counts\n"
                 "  threads                    java threads and their state\n"
                 "  mem | gc                   heap usage, or collect garbage first\n"
-                "modules\n"
-                "  modules                    list modules\n"
-                "  enable|disable <name>      toggle a module\n"
-                "  mod <name> [args...]       send a command to a module\n"
-                "  load <plugin.so|script.js> load a native plugin or a script\n"
-                "  unload|reload <plugin>     by path, file name, or one of its modules\n"
                 "inspect\n"
                 "  classes <filter>           search loaded classes\n"
                 "  fields|methods <class> [f] list members with deobfuscated names\n"
                 "  map <class> [member]       show mapping entries\n"
-                "  script load|unload|list    JavaScript plugins\n"
+                "  script load|unload|reload|list|call    UMC plugins\n"
                 "  game                       which game accessors resolved on this version\n"
                 "  mappings load <file>       load ProGuard mappings (the CLI does this on inject)\n"
                 "  get <class> <field>        read a static field\n"
@@ -471,7 +439,7 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
             for (auto& n : names) out += n + "\n";
             return {true, out.empty() ? "no scripts loaded\n" : out};
         }
-        if (args.size() < 3) return {false, "usage: script load <file.js> | unload <name> | list\n"};
+        if (args.size() < 3) return {false, "usage: script load <file.umc> | unload <name> | list\n"};
         if (sub == "load") {
             // Optional 4th argument: comma-separated permissions the user approved ("none" for none).
             std::set<std::string> grants;
@@ -480,14 +448,25 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
                 std::string g;
                 while (std::getline(gs, g, ',')) if (!g.empty() && g != "none") grants.insert(g);
             }
-            if (!ScriptEngine::get().load(args[2], err, args.size() > 3 ? &grants : nullptr)) return {false, err + "\n"};
+            if (!ScriptEngine::get().load(args[2], err, args.size() > 3 ? &grants : nullptr, args.size() > 4 ? args[4] : "")) return {false, err + "\n"};
             return {true, "loaded " + args[2] + "\n"};
+        }
+        if (sub == "reload") {
+            if (!ScriptEngine::get().reload(args[2], err, args.size() > 3 ? args[3] : "")) return {false, err + "\n"};
+            return {true, "reloaded " + args[2] + "\n"};
+        }
+        if (sub == "source") { auto result = ScriptEngine::get().source(args[2]); result.second += "\n"; return result; }
+        if (sub == "call") {
+            if (args.size() < 4) return {false, "usage: script call <id> <command> [args...]\n"};
+            auto result = ScriptEngine::get().invoke(args[2], args[3], {args.begin() + 4, args.end()});
+            result.second += "\n";
+            return result;
         }
         if (sub == "unload") {
             if (!ScriptEngine::get().unload(args[2], err)) return {false, err + "\n"};
             return {true, "unloaded " + args[2] + "\n"};
         }
-        return {false, "usage: script load <file.js> | unload <name> | list\n"};
+        return {false, "usage: script load <file.umc> | unload <name> | list\n"};
     }
     if (c == "untrace") {
         if (args.size() < 2) return {false, "usage: untrace <id|all>\n"};
@@ -508,53 +487,6 @@ std::pair<bool, std::string> Core::command(JNIEnv* env, const std::vector<std::s
         std::string out;
         for (size_t i = log_.size() > n ? log_.size() - n : 0; i < log_.size(); ++i) out += log_[i] + "\n";
         return {true, out};
-    }
-    if (c == "modules") {
-        std::lock_guard<std::recursive_mutex> lock(mu_);
-        if (modules_.empty()) return {true, "no modules loaded\n"};
-        std::string out;
-        for (auto& m : modules_)
-            out += std::string(m.enabled ? "[on]  " : "[off] ") + m.module->name() + "  " + m.module->description() + "\n";
-        return {true, out};
-    }
-    if (c == "load") {
-        if (args.size() < 2) return {false, "usage: load <plugin.so | script.js>\n"};
-        if (args[1].size() > 3 && args[1].compare(args[1].size() - 3, 3, ".js") == 0) {
-            std::string err;
-            if (!ScriptEngine::get().load(args[1], err)) return {false, err + "\n"};
-            return {true, "loaded script " + args[1] + "\n"};
-        }
-        std::string err;
-        std::lock_guard<std::recursive_mutex> lock(mu_);
-        if (!load_plugin(args[1], err)) return {false, err + "\n"};
-        return {true, "loaded " + args[1] + "\n"};
-    }
-    if (c == "unload" || c == "reload") {
-        if (args.size() < 2) return {false, "usage: " + c + " <plugin>\n"};
-        std::string path, err;
-        if (!unload_plugin(env, args[1], path, err)) return {false, err + "\n"};
-        if (c == "unload") return {true, "unloaded " + path + "\n"};
-        std::lock_guard<std::recursive_mutex> lock(mu_);
-        if (!load_plugin(path, err)) return {false, err + "\n"};
-        return {true, "reloaded " + path + " (modules start disabled)\n"};
-    }
-    if (c == "enable" || c == "disable" || c == "mod") {
-        if (args.size() < 2) return {false, "usage: " + c + " <module>\n"};
-        std::lock_guard<std::recursive_mutex> lock(mu_);
-        ModuleSlot* slot = module_slot(args[1]);
-        if (!slot) return {false, "no module named " + args[1] + "\n"};
-        if (c == "mod") {
-            try {
-                std::string out = slot->module->on_command(*this, env, {args.begin() + 2, args.end()});
-                if (!out.empty() && out.back() != '\n') out += "\n";
-                return {true, out};
-            } catch (const std::exception& e) {
-                return {false, std::string(e.what()) + "\n"};
-            }
-        }
-        std::string msg;
-        bool ok = set_enabled(env, *slot, c == "enable", msg);
-        return {ok, msg + "\n"};
     }
     return {false, "unknown command: " + c + " (try help)\n"};
 }

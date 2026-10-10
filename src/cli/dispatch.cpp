@@ -2,6 +2,9 @@
 #include <filesystem>
 #include <cstdlib>
 #include <iostream>
+#include <fstream>
+#include "common/language.hpp"
+#include "common/sha256.hpp"
 
 #include "cli/dispatch.hpp"
 #include "cli/inject.hpp"
@@ -32,10 +35,14 @@ void usage(bool banner) {
 usage: umc [-p PID] <command> [args...]
 
 local
+  check <file.umc> [--json]         validate without executing
   ps [-a]                          list running Minecraft JVMs (-a: every JVM)
-  attach [PID] [-o OPTS] [-l LIB]  inject into a running game (-l adds a plugin, repeatable)
+  attach [PID] [-o OPTS]   inject into a running game
   mappings fetch|import|list       manage obfuscation mappings
-  install <file|url> [--yes]       install a script plugin (shows what it asks for first)
+  search [query] | info <id@version> | versions <id>
+                                  browse the plugin registry
+  install <file|url|id@version> [--registry URL] [--yes]
+                                  install plugins and their dependencies
   uninstall <id> | scripts         remove a plugin, or list installed plugins
   shell | repl                    interactive commands, history and live events
   daemon start|stop|status|events  watch game launches and attach automatically
@@ -44,18 +51,15 @@ local
 in the game (-p picks the process when several have UMC)
   status | threads | mem | gc
   game                            report resolved game accessors
-  script load <file.js> | script unload <id> | script list
+  script load <file.umc> | unload <id> | reload <id> | list
+  script call <id> <command> [args...]
   classes <filter> | fields <class> | methods <class> | map <class> [member]
   get <class> <field> | set <class> <field> <value> | call <class> <method> [args...]
   dump <class> <file> | hooks | trace <class> <method> [desc] | untrace <id|all>
   log [n] | log -f
 
-trusted native developer plugins
-  modules | enable <m> | disable <m> | mod <m> [args...]
-  load <library|script.js> | unload <plugin> | reload <plugin>
-
 agent options (-o), comma separated
-  version=26.3  side=client|server  mappings=FILE  enable=mod1+mod2
+  version=26.3  side=client|server  mappings=FILE
 )";
 }
 
@@ -98,8 +102,9 @@ int cmd_ps(bool all) {
 int cmd_attach(int pid, const std::vector<std::string>& args) {
     InjectOptions opts;
     for (size_t i = 1; i < args.size(); ++i) {
-        if (args[i] == "-o" && i + 1 < args.size()) opts.agent_options = args[++i];
-        else if (args[i] == "-l" && i + 1 < args.size()) opts.plugins.push_back(args[++i]);
+        if (args[i] == "-p" && i + 1 < args.size()) pid = std::atoi(args[++i].c_str());
+        else if (args[i] == "-o" && i + 1 < args.size()) opts.agent_options = args[++i];
+        else if (args[i] == "-l") { std::cerr << "native plugins are no longer supported\n"; return 2; }
         else if (args[i] == "--no-fetch") opts.fetch_mappings = false;
         else pid = std::atoi(args[i].c_str());
     }
@@ -150,11 +155,30 @@ int dispatch(std::vector<std::string> args, int pid) {
     }
 
     const std::string& cmd = args[0];
+    if (cmd == "check") {
+        if (args.size() < 2) { std::cerr << "usage: umc check <file.umc> [--json]\n"; return 2; }
+        std::ifstream file(plat::expand_home(args[1]), std::ios::binary);
+        if (!file) { std::cerr << "cannot read plugin\n"; return 1; }
+        std::string body(lang::max_source_bytes + 1, '\0'); file.read(body.data(), std::streamsize(body.size())); body.resize(size_t(file.gcount()));
+        lang::Compiled compiled; std::string error;
+        if (!lang::compile(body, compiled, error)) { std::cerr << error << "\n"; return 1; }
+        const auto& meta = compiled.meta;
+        if (args.size() > 2 && args[2] == "--json") {
+            std::cout << "{\"id\":" << lang::quote(meta.id) << ",\"version\":" << lang::quote(meta.version) << ",\"name\":" << lang::quote(meta.name)
+                      << ",\"description\":" << lang::quote(meta.description) << ",\"sha256\":" << lang::quote(sha256(body)) << ",\"permissions\":[";
+            for (size_t i = 0; i < meta.permissions.size(); ++i) std::cout << (i ? "," : "") << lang::quote(meta.permissions[i]);
+            std::cout << "],\"dependencies\":[";
+            for (size_t i = 0; i < meta.dependencies.size(); ++i) std::cout << (i ? "," : "") << "{\"id\":" << lang::quote(meta.dependencies[i].first) << ",\"version\":" << lang::quote(meta.dependencies[i].second) << "}";
+            std::cout << "]}\n";
+        } else std::cout << "valid UMC plugin: " << meta.id << " " << meta.version << "\n";
+        return 0;
+    }
     if (cmd == "ps") return cmd_ps(args.size() > 1 && args[1] == "-a");
     if (cmd == "mappings") return mappings_command({args.begin() + 1, args.end()});
     if (cmd == "attach") return cmd_attach(pid, args);
     if (cmd == "daemon") return daemon_command({args.begin() + 1, args.end()});
     if (cmd == "shell" || cmd == "repl") return shell(pid);
+    if (cmd == "search" || cmd == "info" || cmd == "versions") return scripts_command(cmd, args, nullptr);
     if (cmd == "install" || cmd == "uninstall" || cmd == "scripts") {
         GameProcess target;
         bool have = false;
@@ -166,16 +190,15 @@ int dispatch(std::vector<std::string> args, int pid) {
     GameProcess p;
     if (!pick(pid, true, p)) return 1;
     if (cmd == "log" && args.size() > 1 && args[1] == "-f") return cmd_follow(p);
-
-    // Files named on the command line must be readable by the game, which may be sandboxed.
-    auto stage_arg = [&](size_t index) {
-        if (index >= args.size() || !plat::file_exists(args[index])) return;
-        std::string error, staged = stage_file(p, std::filesystem::absolute(args[index]).string(), error);
-        if (staged.empty()) std::cerr << "warning: " << error << "\n";
-        else args[index] = staged;
-    };
-    if (cmd == "load") stage_arg(1);
-    if (cmd == "script" && args.size() > 2 && args[1] == "load") stage_arg(2);
+    if (cmd == "script" && args.size() > 2 && args[1] == "load") return load_local_plugin(p, args);
+    if (cmd == "script" && args.size() == 3 && args[1] == "reload") {
+        std::string reply, error;
+        if (!agent_request(p, {"script", "source", args[2]}, reply) || reply.rfind("ok\n", 0) != 0) { std::cerr << reply; return 1; }
+        std::string origin = reply.substr(3); if (!origin.empty() && origin.back() == '\n') origin.pop_back();
+        std::string staged = stage_file(p, origin, error);
+        if (staged.empty()) { std::cerr << error << '\n'; return 1; }
+        args.push_back(staged);
+    }
 
     std::string reply;
     if (!agent_request(p, args, reply)) {

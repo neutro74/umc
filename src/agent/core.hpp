@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "agent/mappings.hpp"
-#include "umc/umc.hpp"
+#include "agent/call.hpp"
 
 namespace umc {
 
@@ -23,7 +23,7 @@ inline std::string internal_name(std::string s) {
     return s;
 }
 
-class Core final : public Api {
+class Core final {
 public:
     static Core& get();
 
@@ -54,20 +54,19 @@ public:
     jvmtiEnv* jvmti() const { return jvmti_; }
     JavaVM* vm() const { return vm_; }
 
-    std::string version() override { return version_; }
-    Side side() override { return side_; }
-    bool remapped() override { return !mappings_.empty(); }
-    std::string runtime_class_name(const std::string& named) override;
+    std::string version() { return version_; }
+    Side side() { return side_; }
+    bool remapped() { return !mappings_.empty(); }
+    std::string runtime_class_name(const std::string& named);
     std::string runtime_descriptor(const std::string& descriptor) const { return mappings_.remap_desc(descriptor); }
-    jclass find_class(JNIEnv* env, const std::string& owner) override;
+    jclass find_class(JNIEnv* env, const std::string& owner);
     jmethodID find_method(JNIEnv* env, const std::string& owner, const std::string& name,
-                          const std::string& desc) override;
+                          const std::string& desc);
     jfieldID find_field(JNIEnv* env, const std::string& owner, const std::string& name,
-                        const std::string& desc) override;
-    int hook(const std::string& owner, const std::string& method, const std::string& desc, HookFn fn) override;
-    void unhook(int id) override;
-    void add_module(std::unique_ptr<Module> module) override;
-    void log(const std::string& message) override;
+                        const std::string& desc);
+    int hook(const std::string& owner, const std::string& method, const std::string& desc, HookFn fn);
+    void unhook(int id);
+    void log(const std::string& message);
 
     // Boxing helpers used by Call implementations.
     jobject box(JNIEnv* env, const char* cls, const char* sig, jvalue v);
@@ -88,21 +87,9 @@ private:
         jmethodID method = nullptr;
         bool is_static = false;
     };
-    struct ModuleSlot {
-        std::unique_ptr<Module> module;
-        bool enabled = false;
-        std::string origin;
-    };
-    struct Plugin {
-        std::string path;
-        void* handle;
-    };
-
     bool define_bridge(JNIEnv* env);
     void detect_game(JNIEnv* env);
     bool load_mappings(const std::string& path, std::string& error);
-    bool load_plugin(const std::string& path, std::string& error);
-    bool unload_plugin(JNIEnv* env, const std::string& which, std::string& path, std::string& error);
     std::string retransform(JNIEnv* env, const std::string& runtime_class);
     void add_bridge_read(JNIEnv* env, jclass cls);
     // Like find_method/find_field, also returning the class that declares the member.
@@ -112,8 +99,6 @@ private:
                            const std::string& desc, jclass* declaring);
     jclass scan_loaded(JNIEnv* env, const std::string& runtime_class);
     std::string signature_name(jclass cls);
-    ModuleSlot* module_slot(const std::string& name);
-    bool set_enabled(JNIEnv* env, ModuleSlot& slot, bool enabled, std::string& msg);
 
     std::string cmd_status();
     std::string cmd_hooks();
@@ -148,8 +133,6 @@ private:
     std::map<int, HookEntry> hooks_;
     std::vector<Site> sites_;  // index == site id
     int next_hook_ = 1;
-    std::vector<ModuleSlot> modules_;
-    std::vector<Plugin> plugins_;
     std::set<int> traces_;
 
     // Class bytes captured by `dump` during a retransform.

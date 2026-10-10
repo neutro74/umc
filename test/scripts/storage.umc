@@ -1,0 +1,11 @@
+plugin "storage-check";
+permissions storage;
+command "write" { fs.write("notes.txt", "hello"); fs.append("notes.txt", " world"); return fs.read("notes.txt"); }
+command "missing" { return fs.read("missing.txt"); }
+command "list" { return fs.list(); }
+command "escape" { return fs.read("../secret"); }
+command "absolute" { return fs.read("/etc/passwd"); }
+command "hidden" { return fs.read(".hidden"); }
+command "symlink" { return fs.read("link.txt"); }
+command "large" { let text = "x"; let i = 0; while i < 21 { text = text + text; i = i + 1; } return fs.write("large.txt", text); }
+command "remove" { fs.remove("notes.txt"); return fs.exists("notes.txt"); }

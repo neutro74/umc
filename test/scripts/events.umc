@@ -1,0 +1,6 @@
+plugin "events-check";
+permissions chat, combat;
+state attacks = 0;
+on chat(event) { log("saw chat:", event.text); if contains(event.text, "secret") { cancel; } }
+on send(event) { log("saw send:", event.text, event.command); if event.text == ".help" { cancel; } }
+on attack(event) { attacks = attacks + 1; if event.target != null { log("saw attack on", event.target.name); } if attacks % 2 == 0 { cancel; } }

@@ -36,12 +36,14 @@ bool send_all(Socket s, const std::string& data);
 std::string recv_some(Socket s);
 std::string recv_all(Socket s);
 void close_socket(Socket s);
+bool replace_file(const std::string& from, const std::string& to);
 void remove_file(const std::string& path);
 
 std::string runtime_dir();  // sockets and staged files
 std::string config_dir();
 std::string cache_dir();
 std::string state_dir();    // logs, history
+std::string expand_home(const std::string& path);
 bool make_dirs(const std::string& path);
 bool file_exists(const std::string& path);
 bool copy_file(const std::string& from, const std::string& to);
@@ -55,9 +57,6 @@ bool wait_readable(Socket s, int timeout_ms);
 std::vector<std::string> self_args();
 std::string self_exe();
 
-void* lib_open(const std::string& path, std::string& error);
-void* lib_symbol(void* lib, const char* name);
-void lib_close(void* lib);
 
 inline std::string join(const std::string& a, const std::string& b) { return a + kSep + b; }
 inline std::string agent_socket_name(int pid) { return std::to_string(pid) + ".sock"; }

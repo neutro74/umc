@@ -46,15 +46,12 @@ check "tick hook patches the real class" "site(s) patched" "$umc" -p "$server" h
 check "traced calls arrive" "trace net.minecraft.server.MinecraftServer.tickServer" "$umc" -p "$server" log 20
 check "untrace" "stopped" "$umc" -p "$server" untrace all
 
-cat > "$work/ticks.js" <<'JS'
-// ==UMC==
-// @name Ticks
-// @id ticks
-// ==/UMC==
-let n = 0;
-umc.on("tick", () => { if (++n === 40) umc.log("server ticks:", n); });
-JS
-check "script loads" "loaded" "$umc" -p "$server" script load "$work/ticks.js"
+cat > "$work/ticks.umc" <<'UMC'
+plugin "ticks";
+state n = 0;
+on tick { n = n + 1; if n == 40 { log("server ticks:", n); } }
+UMC
+check "script loads" "loaded" "$umc" -p "$server" script load "$work/ticks.umc"
 sleep 4
 check "script ticks with the server" "server ticks: 40" "$umc" -p "$server" log 30
 check "server still responsive" "pong" "$umc" -p "$server" ping

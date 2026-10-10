@@ -1,0 +1,8 @@
+plugin "base";
+name "Base";
+state n = 0;
+fn twice(x) { return x * 2; }
+command "add"(args) { return twice(args[0]) + args[1]; }
+command "step" { n = n + 1; return n; }
+command "count" { return n; }
+command "runaway" { while true { n = n + 1; } }

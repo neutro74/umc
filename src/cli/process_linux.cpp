@@ -12,6 +12,7 @@
 #include "cli/hotspot_attach.hpp"
 #include "cli/process.hpp"
 #include "common/platform.hpp"
+#include "common/sha256.hpp"
 
 namespace umc::cli {
 
@@ -88,7 +89,10 @@ std::string stage_file(const GameProcess& p, const std::string& host_path, std::
     // and the file keeps its real name.
     std::string base = host_path.substr(host_path.rfind('/') + 1);
     std::string name = base;
-    std::string version = std::to_string(st.st_size) + "-" + std::to_string(st.st_mtime);
+    std::ifstream source(host_path, std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
+    if (!source || source.bad()) { error = "cannot read " + host_path; return ""; }
+    std::string version = sha256(bytes);
     std::string inside = plat::join(plat::join(plat::runtime_dir(), "staged"), version);
     std::string outside = root_of(p.pid) + inside;
     if (!plat::make_dirs(outside)) {

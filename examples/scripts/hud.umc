@@ -1,0 +1,8 @@
+plugin "coords-hud";
+name "Coordinates HUD";
+permissions player, render;
+depends "coords" "1.0.0";
+on render {
+    ui.rect(4, 4, 210, 24, 0x90101418);
+    ui.text("XYZ " + plugins.call("coords", "position"), 10, 10, 0xFFE6E8EB);
+}

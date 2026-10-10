@@ -1,0 +1,2 @@
+plugin "broken";
+on tick { let x = missing; }

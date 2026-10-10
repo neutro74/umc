@@ -1,0 +1,3 @@
+plugin "private";
+permissions storage;
+command "read" { return fs.read("secret.txt"); }

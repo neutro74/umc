@@ -14,15 +14,6 @@ namespace umc::cli {
 
 namespace {
 
-std::vector<std::string> config_plugins() {
-    std::vector<std::string> found;
-    std::error_code ec;
-    for (auto& e : fs::directory_iterator(plat::join(plat::config_dir(), "plugins"), ec))
-        if (e.path().extension() == plat::kLibExt) found.push_back(e.path().string());
-    std::sort(found.begin(), found.end());
-    return found;
-}
-
 // Pulls "minecraft <version> (<side>, ..." out of the agent's status text.
 void parse_status(const std::string& status, std::string& version, std::string& side, bool& has_mappings) {
     std::istringstream in(status);
@@ -77,16 +68,7 @@ bool inject(const GameProcess& p, const InjectOptions& opts, std::vector<std::st
         return false;
     }
 
-    std::string options = opts.agent_options, plugins;
-    std::vector<std::string> wanted = config_plugins();
-    wanted.insert(wanted.end(), opts.plugins.begin(), opts.plugins.end());
-    for (auto& plugin : wanted) {
-        std::string path = stage_file(p, fs::absolute(plugin).string(), error);
-        if (path.empty()) log.push_back("skipping plugin: " + error);
-        else plugins += (plugins.empty() ? "" : "|") + path;
-    }
-    if (!plugins.empty()) options += std::string(options.empty() ? "" : ",") + "plugins=" + plugins;
-
+    std::string options = opts.agent_options;
     std::string message;
     if (!inject_library(p, staged, options, message)) {
         log.push_back(message);

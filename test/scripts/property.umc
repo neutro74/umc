@@ -1,0 +1,3 @@
+plugin "property";
+permissions player;
+command "escape" { return game.player()["constructor"]; }

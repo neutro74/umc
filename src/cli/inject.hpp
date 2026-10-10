@@ -9,7 +9,6 @@ namespace umc::cli {
 
 struct InjectOptions {
     std::string agent_options;           // passed through to the agent (key=value,...)
-    std::vector<std::string> plugins;    // extra plugin libraries on top of the config dir
     bool fetch_mappings = true;          // download Mojang mappings when the version needs them
 };
 

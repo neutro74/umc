@@ -4,6 +4,7 @@ net.minecraft.client.Minecraft -> ave:
     !f theWorld -> f
     !m ()Lnet/minecraft/client/Minecraft; getMinecraft -> a
     !m ()V runTick -> s
+    !m (IJLjava/lang/String;)I computeScore -> d
 net.minecraft.entity.Entity -> pk:
     !f posX -> s
     !f posY -> t

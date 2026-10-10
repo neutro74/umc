@@ -1,0 +1,10 @@
+plugin "local-commands";
+name "Local Chat Commands";
+permissions player, chat;
+depends "coords" "1.0.0";
+on send(event) {
+    if event.text == ".coords" {
+        game.chat(plugins.call("coords", "position"));
+        cancel;
+    }
+}

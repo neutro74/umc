@@ -1,0 +1,4 @@
+plugin "denied";
+command "storage" { return fs.read("notes.txt"); }
+command "player" { return game.player(); }
+command "escape" { return game.player().constructor; }

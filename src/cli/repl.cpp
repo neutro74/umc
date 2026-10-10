@@ -115,17 +115,17 @@ std::string prompt_for(const Target& t, bool ambiguous) {
 
 const std::vector<std::string>& command_names() {
     static const std::vector<std::string> names = {
-        "attach", "bye", "call", "classes", "clear", "daemon", "disable", "dump", "enable", "exit", "fields", "game",
-        "gc", "get", "help", "hooks", "install", "load", "log", "map", "mappings", "mem", "methods", "mod", "modules",
-        "ps", "quit", "reload", "script", "scripts", "set", "status", "threads", "trace", "uninstall", "unload",
-        "untrace", "use",
+        "attach", "bye", "call", "check", "classes", "clear", "daemon", "dump", "exit", "fields", "game",
+        "gc", "get", "help", "hooks", "info", "install", "log", "map", "mappings", "mem", "methods",
+        "ps", "quit", "search", "script", "scripts", "set", "status", "threads", "trace", "uninstall",
+        "untrace", "use", "versions",
     };
     return names;
 }
 
-// Names the agent knows, for completing arguments (modules, scripts). Cached briefly.
+// Plugin IDs used for argument completion. Cached briefly.
 struct Names {
-    std::vector<std::string> modules, scripts;
+    std::vector<std::string> scripts;
     Clock::time_point fetched{};
     int pid = 0;
 };
@@ -152,7 +152,6 @@ void refresh_names(Names& names, int pid) {
             if (!name.empty() && name[0] != '[' && name != "no") into.push_back(name);
         }
     };
-    collect({"modules"}, names.modules, true);
     collect({"script", "list"}, names.scripts, false);
 }
 
@@ -199,11 +198,8 @@ void complete(const char* buf, linenoiseCompletions* lc) {
     std::string prefix = line.substr(line.find_last_of(' ') + 1), head = line.substr(0, line.find_last_of(' ') + 1);
     std::vector<std::string> options;
     const std::string& cmd = words[0];
-    if (words.size() == 1 && (cmd == "enable" || cmd == "disable" || cmd == "mod")) {
-        refresh_names(g_names, g_names_pid);
-        options = g_names.modules;
-    } else if (cmd == "script" && words.size() == 1) {
-        options = {"load", "unload", "list"};
+    if (cmd == "script" && words.size() == 1) {
+        options = {"load", "unload", "reload", "list", "call"};
     } else if (cmd == "script" && words.size() == 2 && words[1] == "unload") {
         refresh_names(g_names, g_names_pid);
         options = g_names.scripts;

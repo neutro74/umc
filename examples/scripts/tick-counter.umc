@@ -1,0 +1,6 @@
+plugin "tick-counter";
+name "Tick Counter";
+state ticks = 0;
+on tick { ticks = ticks + 1; }
+command "count" { return ticks; }
+command "reset" { ticks = 0; return "reset"; }

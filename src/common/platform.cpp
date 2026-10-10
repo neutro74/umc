@@ -12,7 +12,6 @@
 #include <shellapi.h>
 #include <windows.h>
 #else
-#include <dlfcn.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -82,6 +81,16 @@ bool fill_addr(const std::string& path, sockaddr_un& addr) {
 }
 
 }  // namespace
+
+std::string expand_home(const std::string& path) {
+    if (path != "~" && path.rfind("~/", 0) != 0 && path.rfind("~\\", 0) != 0) return path;
+    const char* value = std::getenv("HOME");
+#if defined(_WIN32)
+    if (!value || !*value) value = std::getenv("USERPROFILE");
+#endif
+    if (!value || !*value) return path;
+    return std::string(value) + path.substr(1);
+}
 
 Socket listen_local(const std::string& path, std::string& error) {
     sockaddr_un addr;
@@ -157,6 +166,14 @@ void close_socket(Socket s) {
     closesocket(SOCKET(s));
 #else
     close(int(s));
+#endif
+}
+
+bool replace_file(const std::string& from, const std::string& to) {
+#if defined(_WIN32)
+    return MoveFileExA(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    return std::rename(from.c_str(), to.c_str()) == 0;
 #endif
 }
 
@@ -317,34 +334,6 @@ std::string self_exe() {
     char buf[4096] = {};
     ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
     return n > 0 ? std::string(buf, size_t(n)) : "";
-#endif
-}
-
-void* lib_open(const std::string& path, std::string& error) {
-#if defined(_WIN32)
-    HMODULE h = LoadLibraryA(path.c_str());
-    if (!h) error = "LoadLibrary failed for " + path + " (error " + std::to_string(GetLastError()) + ")";
-    return reinterpret_cast<void*>(h);
-#else
-    void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-    if (!h) error = dlerror();
-    return h;
-#endif
-}
-
-void* lib_symbol(void* lib, const char* name) {
-#if defined(_WIN32)
-    return reinterpret_cast<void*>(GetProcAddress(reinterpret_cast<HMODULE>(lib), name));
-#else
-    return dlsym(lib, name);
-#endif
-}
-
-void lib_close(void* lib) {
-#if defined(_WIN32)
-    FreeLibrary(reinterpret_cast<HMODULE>(lib));
-#else
-    dlclose(lib);
 #endif
 }
 

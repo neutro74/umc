@@ -1,0 +1,9 @@
+plugin "probe";
+permissions hooks;
+state mode = "wrap";
+hook "net.minecraft.client.Minecraft" "computeScore" "(IJLjava/lang/String;)I" {
+    log("args", args[0], args[1]);
+    if mode == "wrap" { return original() + 1000; }
+    if mode == "override" { return 777; }
+}
+command "mode"(args) { mode = args[0]; return mode; }

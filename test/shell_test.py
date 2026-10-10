@@ -53,14 +53,11 @@ def check(what, ok):
 check("shell shows a prompt for the game", wait_for("umc[1.99.9 client]>"))
 os.write(fd, b"status\r")
 check("a command runs and prints", wait_for("minecraft 1.99.9"))
-os.write(fd, b"mod tick_counter cou\t")
+os.write(fd, b"sta\t")
 read(0.5)
-os.write(fd, b"\x15")                   # clear the line
-os.write(fd, b"enab\t")                  # tab completes the command name
-read(0.5)
-check("tab completes commands", b"enable" in output)
-os.write(fd, b"\x15modules\r")
-check("modules command works", wait_for("probe"))
+check("tab completes commands", b"status" in output)
+os.write(fd, b"\x15script list\r")
+check("script listing works", wait_for("no scripts loaded"))
 os.write(fd, b"trace net.minecraft.client.Minecraft computeScore\r")
 check("trace starts", wait_for("tracing"))
 check("live events appear above the prompt", wait_for("trace net.minecraft.client.Minecraft.computeScore", 8))
